@@ -564,3 +564,131 @@ def get_wip(step_code=None):
     with get_conn() as conn:
         return _rows(conn.execute(sql, args))
 
+
+# --------------------------------------------------------------------------- #
+# 공정 (process_step route) + 공정실적 (process_result)
+# --------------------------------------------------------------------------- #
+
+_FAB_PASS = ("pass", "ok", "good")
+
+
+def get_process_route(step_code=None, eqp_type=None, stage=None):
+    sql = "SELECT * FROM process_step WHERE 1=1"
+    args: list[Any] = []
+    if step_code:
+        sql += " AND step_code = ?"; args.append(step_code)
+    if eqp_type:
+        sql += " AND eqp_type = ?"; args.append(eqp_type)
+    if stage:
+        sql += " AND stage = ?"; args.append(stage)
+    sql += " ORDER BY seq"
+    with get_conn() as conn:
+        return _rows(conn.execute(sql, args))
+
+
+def list_process_results(lot_id=None, step_code=None, result=None, operator=None,
+                         defect_code=None, has_scrap=None, limit=100):
+    sql = (
+        "SELECT pr.*, ps.step_name FROM process_result pr "
+        "LEFT JOIN process_step ps ON ps.step_code = pr.step_code WHERE 1=1"
+    )
+    args: list[Any] = []
+    if lot_id:
+        sql += " AND pr.lot_id = ?"; args.append(lot_id)
+    if step_code:
+        sql += " AND pr.step_code = ?"; args.append(step_code)
+    if result:
+        sql += " AND pr.result = ?"; args.append(result)
+    if operator:
+        sql += " AND pr.operator = ?"; args.append(operator)
+    if defect_code:
+        sql += " AND pr.defect_code = ?"; args.append(defect_code)
+    if has_scrap is True:
+        sql += " AND pr.scrap_qty > 0"
+    elif has_scrap is False:
+        sql += " AND pr.scrap_qty = 0"
+    sql += " ORDER BY pr.id DESC LIMIT ?"; args.append(limit)
+    with get_conn() as conn:
+        return _rows(conn.execute(sql, args))
+
+
+def register_process_result(lot_id, step_code, eqp_id=None, in_qty=None, scrap_qty=0,
+                            defect_code=None, operator=None, result="Pass",
+                            in_time=None, out_time=None):
+    now = _now_iso()
+    in_time = in_time or now
+    out_time = out_time or now
+    with get_conn() as conn:
+        lot = conn.execute("SELECT * FROM lot WHERE lot_id = ?", (lot_id,)).fetchone()
+        if lot is None:
+            raise ValueError(f"unknown lot_id: {lot_id!r}")
+        step = conn.execute("SELECT * FROM process_step WHERE step_code = ?", (step_code,)).fetchone()
+        if step is None:
+            raise ValueError(f"unknown step_code: {step_code!r}")
+        if in_qty is None:
+            in_qty = lot["wafer_qty"] if lot["wafer_qty"] is not None else (lot["start_qty"] or 0)
+        in_qty = int(in_qty)
+        scrap_qty = int(scrap_qty or 0)
+        if in_qty < 0:
+            raise ValueError(f"in_qty must be >= 0, got {in_qty}")
+        if scrap_qty < 0 or scrap_qty > in_qty:
+            raise ValueError(f"scrap_qty must be between 0 and in_qty ({in_qty}), got {scrap_qty}")
+        out_qty = in_qty - scrap_qty
+
+        new_id = conn.execute(
+            "INSERT INTO process_result"
+            " (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty, defect_code,"
+            "  in_time, out_time, operator, result) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty, defect_code,
+             in_time, out_time, operator, result),
+        ).lastrowid
+
+        product_code = lot["product_code"]
+        shortages = _consume_materials(conn, product_code, step_code, in_qty)
+
+        last_fab_seq = conn.execute(
+            "SELECT MAX(seq) FROM process_step WHERE stage = 'FAB'"
+        ).fetchone()[0]
+        prev_status = lot["status"]
+        passed = str(result).lower() in _FAB_PASS
+        is_last_fab = step["stage"] == "FAB" and step["seq"] == last_fab_seq
+
+        new_status = prev_status
+        if is_last_fab and passed:
+            new_status = "Done"
+        elif prev_status == "Done":
+            new_status = "Running"
+        conn.execute(
+            "UPDATE lot SET current_step = ?, status = ?, wafer_qty = ? WHERE lot_id = ?",
+            (step_code, new_status, out_qty, lot_id),
+        )
+
+        semi_receipt = None
+        if is_last_fab and passed and prev_status != "Done":
+            cum_scrap = conn.execute(
+                "SELECT COALESCE(SUM(scrap_qty),0) FROM process_result WHERE lot_id = ?",
+                (lot_id,),
+            ).fetchone()[0]
+            start_qty = lot["start_qty"] or (out_qty + cum_scrap)
+            y = round(out_qty / start_qty * 100, 2) if start_qty else 0.0
+            pr_id = _insert_product_result(
+                conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
+                item_type="SEMI", good_qty=out_qty, scrap_qty=int(cum_scrap),
+                yield_pct=y, source="AUTO_FAB", eqp_id=eqp_id,
+            )
+            _add_product_inventory(conn, product_code, "SEMI", out_qty, uom="EA", location="WH-SEMI")
+            semi_receipt = {
+                "product_result_id": pr_id, "product_code": product_code,
+                "item_type": "SEMI", "good_qty": out_qty,
+            }
+
+        row = conn.execute(
+            "SELECT pr.*, ps.step_name FROM process_result pr "
+            "LEFT JOIN process_step ps ON ps.step_code = pr.step_code WHERE pr.id = ?",
+            (new_id,),
+        ).fetchone()
+    out = dict(row)
+    out["shortages"] = shortages
+    out["semi_receipt"] = semi_receipt
+    return out
+

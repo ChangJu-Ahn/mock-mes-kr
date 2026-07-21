@@ -279,5 +279,65 @@ class LotTests(DbTestBase):
         self.assertRegex(auto_id, r'^LOT\d{4}$')
 
 
+class ProcessResultTests(DbTestBase):
+    def setUp(self):
+        super().setUp()
+        self._seed_master()
+        self.lot = self.db.start_lot("P1", 25)
+
+    def test_move_advances_lot_and_consumes_material(self):
+        db = self.db
+        lot_id = self.lot["lot_id"]
+        res = db.register_process_result(lot_id, "PHOTO", scrap_qty=2)  # in defaults 25
+        self.assertEqual(res["in_qty"], 25)
+        self.assertEqual(res["out_qty"], 23)
+        self.assertEqual(res["shortages"], [])
+        self.assertIsNone(res["semi_receipt"])
+        after = db.get_lot(lot_id)
+        self.assertEqual(after["current_step"], "PHOTO")
+        self.assertEqual(after["wafer_qty"], 23)
+        self.assertEqual(db.get_material("PR-EUV")["qty"], 100.0 - 2.0 * 25)  # 50
+
+    def test_scrap_exceeds_in_qty_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.register_process_result(self.lot["lot_id"], "PHOTO", in_qty=10, scrap_qty=11)
+
+    def test_final_fab_pass_closes_lot_and_receives_semi(self):
+        db = self.db
+        lot_id = self.lot["lot_id"]
+        res = db.register_process_result(lot_id, "TEST", in_qty=20, scrap_qty=1, result="Pass")
+        self.assertEqual(res["out_qty"], 19)
+        self.assertIsNotNone(res["semi_receipt"])
+        self.assertEqual(res["semi_receipt"]["good_qty"], 19)
+        self.assertEqual(db.get_lot(lot_id)["status"], "Done")
+        inv = db.list_product_inventory(product_code="P1", item_type="SEMI")
+        self.assertEqual(inv[0]["qty"], 19.0)
+        auto = db.list_product_results(product_code="P1", source="AUTO_FAB")
+        self.assertEqual(len(auto), 1)
+        self.assertEqual(auto[0]["item_type"], "SEMI")
+
+    def test_final_fab_fail_does_not_close(self):
+        db = self.db
+        res = db.register_process_result(self.lot["lot_id"], "TEST", result="Fail")
+        self.assertIsNone(res["semi_receipt"])
+        self.assertNotEqual(db.get_lot(self.lot["lot_id"])["status"], "Done")
+
+    def test_material_shortage_does_not_block(self):
+        db = self.db
+        db.upsert_bom("P1", "PHOTO", "PR-EUV", 10.0)  # need 10*25=250 > 100
+        res = db.register_process_result(self.lot["lot_id"], "PHOTO")
+        self.assertEqual(len(res["shortages"]), 1)
+        self.assertEqual(db.get_material("PR-EUV")["qty"], 0.0)
+        self.assertEqual(db.get_lot(self.lot["lot_id"])["current_step"], "PHOTO")
+
+    def test_process_route_and_results_queries(self):
+        db = self.db
+        db.register_process_result(self.lot["lot_id"], "PHOTO", scrap_qty=3, defect_code="Particle")
+        self.assertEqual(len(db.get_process_route(stage="FAB")), 2)
+        rows = db.list_process_results(lot_id=self.lot["lot_id"], has_scrap=True)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["defect_code"], "Particle")
+
+
 if __name__ == "__main__":
     unittest.main()

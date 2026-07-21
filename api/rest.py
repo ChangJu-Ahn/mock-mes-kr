@@ -6,59 +6,17 @@ from pydantic import BaseModel, Field
 from api.auth import require_api_key
 from mes_core import db
 
-
 router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key)])
 
 
-class ProductionResultCreate(BaseModel):
-    product: str
-    good_qty: int = Field(ge=0)
-    scrap_qty: int = Field(default=0, ge=0)
-    result_date: str | None = None
-    line: str | None = None
-    eqp_id: str | None = None
-    yield_pct: float | None = None
+# --------------------------------------------------------------------------- #
+# Models
+# --------------------------------------------------------------------------- #
 
-
-class ProductionResult(BaseModel):
-    id: int
-    result_date: str
-    line: str | None = None
-    eqp_id: str | None = None
-    product: str
-    good_qty: int
-    scrap_qty: int
-    yield_pct: float
-
-
-class ProductionSummaryRow(BaseModel):
-    group: str
-    records: int
-    good_total: int
-    scrap_total: int
-    avg_yield: float
-
-
-class InventoryItem(BaseModel):
-    item_code: str
-    item_name: str
-    category: str
-    qty: float
-    uom: str
-    location: str
-
-
-class InventoryFacets(BaseModel):
-    categories: list[str]
-    locations: list[str]
-
-
-class WipItem(BaseModel):
-    seq: int
-    step_code: str
-    step_name: str
-    lot_count: int
-    wafer_qty: int
+class ApiIndex(BaseModel):
+    name: str
+    docs: str
+    endpoints: list[str]
 
 
 class HealthResponse(BaseModel):
@@ -67,29 +25,123 @@ class HealthResponse(BaseModel):
     counts: dict[str, int]
 
 
-class ApiIndex(BaseModel):
-    name: str
-    docs: str
-    endpoints: list[str]
+class ProductRow(BaseModel):
+    product_code: str
+    product_name: str
+    tech_node: str | None = None
 
+
+class ProductInventoryRow(BaseModel):
+    product_code: str
+    product_name: str | None = None
+    item_type: str
+    qty: float
+    uom: str | None = None
+    location: str | None = None
+
+
+class ProductResultRow(BaseModel):
+    id: int
+    result_date: str
+    lot_id: str | None = None
+    product_code: str
+    product_name: str | None = None
+    item_type: str
+    good_qty: int | None = None
+    scrap_qty: int | None = None
+    yield_pct: float | None = None
+    source: str | None = None
+    line: str | None = None
+    eqp_id: str | None = None
+
+
+class MaterialRow(BaseModel):
+    material_code: str
+    material_name: str
+    category: str | None = None
+    qty: float
+    uom: str | None = None
+    location: str | None = None
+
+
+class MaterialByStepRow(BaseModel):
+    product_code: str
+    product_name: str | None = None
+    step_code: str
+    step_name: str | None = None
+    material_code: str
+    material_name: str | None = None
+    qty_per_wafer: float
+    on_hand_qty: float
+    uom: str | None = None
+    location: str | None = None
+
+
+class BomRow(BaseModel):
+    id: int
+    product_code: str
+    step_code: str
+    step_name: str | None = None
+    material_code: str
+    material_name: str | None = None
+    qty_per_wafer: float
+    uom: str | None = None
+
+
+class ProductResultCreate(BaseModel):
+    lot_id: str
+    item_type: Literal["SEMI", "FIN"]
+    good_qty: int = Field(ge=0)
+    scrap_qty: int = Field(default=0, ge=0)
+
+
+class PackagingCreate(BaseModel):
+    product_code: str
+    in_qty: int = Field(gt=0)
+    scrap_qty: int = Field(default=0, ge=0)
+    lot_id: str | None = None
+    eqp_id: str | None = None
+    operator: str | None = None
+
+
+class MaterialReceipt(BaseModel):
+    material_code: str
+    qty: float = Field(ge=0)
+    material_name: str | None = None
+    category: str | None = None
+    uom: str | None = None
+    location: str | None = None
+
+
+class BomUpsert(BaseModel):
+    product_code: str
+    step_code: str
+    material_code: str
+    qty_per_wafer: float = Field(ge=0)
+    uom: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Index / health
+# --------------------------------------------------------------------------- #
 
 @router.get("", response_model=ApiIndex, tags=["Index"])
 @router.get("/", response_model=ApiIndex, tags=["Index"], include_in_schema=False)
 def api_index() -> dict[str, Any]:
     return {
-        "name": "Mock MES REST API",
+        "name": "Mock MES REST API (Product · Material · BOM)",
         "docs": "/api/docs",
         "endpoints": [
             "GET /api/health",
             "GET /api/products",
-            "POST /api/production-results",
-            "GET /api/production-results",
-            "GET /api/production-results/summary",
-            "GET /api/production-results/{id}",
-            "GET /api/inventory",
-            "GET /api/inventory/facets",
-            "GET /api/inventory/{item_code}",
-            "GET /api/wip",
+            "GET /api/product-inventory",
+            "GET|POST /api/product-results",
+            "POST /api/packaging",
+            "GET /api/materials",
+            "GET /api/materials/by-step",
+            "POST /api/materials/receipt",
+            "GET|PUT /api/bom",
+            "DELETE /api/bom/{bom_id}",
         ],
     }
 
@@ -99,89 +151,119 @@ def health() -> dict[str, Any]:
     return {"status": "ok", "db": db.get_db_path(), "counts": db.counts()}
 
 
-@router.get("/products", response_model=list[str], tags=["Index"])
-def get_products() -> list[str]:
-    """Distinct product names -- handy for discovering valid filter values."""
+@router.get("/products", response_model=list[ProductRow], tags=["Product"])
+def get_products() -> list[dict[str, Any]]:
     return db.list_products()
 
 
 # --------------------------------------------------------------------------- #
-# 실적 (production results)
+# 제품 인벤토리 / 제품실적
 # --------------------------------------------------------------------------- #
 
-@router.post("/production-results", response_model=ProductionResult, tags=["Production"])
-def create_production_result(payload: ProductionResultCreate) -> dict[str, Any]:
-    return db.add_production_result(**payload.model_dump())
+@router.get("/product-inventory", response_model=list[ProductInventoryRow], tags=["Product"])
+def get_product_inventory(
+    product_code: str | None = None,
+    item_type: Literal["SEMI", "FIN"] | None = None,
+) -> list[dict[str, Any]]:
+    return db.list_product_inventory(product_code=product_code, item_type=item_type)
 
 
-@router.get("/production-results", response_model=list[ProductionResult], tags=["Production"])
-def get_production_results(
-    product: str | None = None,
-    line: str | None = None,
-    eqp_id: str | None = None,
+@router.get("/product-results", response_model=list[ProductResultRow], tags=["Product"])
+def get_product_results(
+    product_code: str | None = None,
+    item_type: Literal["SEMI", "FIN"] | None = None,
+    source: Literal["AUTO_FAB", "AUTO_PACK", "MANUAL"] | None = None,
+    lot_id: str | None = None,
     date_from: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
     date_to: str | None = Query(default=None, description="YYYY-MM-DD inclusive"),
-    min_yield: float | None = Query(default=None, ge=0, le=100),
-    sort: Literal["date", "yield", "good", "scrap"] = "date",
-    order: Literal["asc", "desc"] = "desc",
     limit: int = Query(default=100, ge=1, le=1000),
 ) -> list[dict[str, Any]]:
-    return db.list_production_results(
-        product=product, line=line, eqp_id=eqp_id, date_from=date_from,
-        date_to=date_to, min_yield=min_yield, sort=sort, order=order, limit=limit,
+    return db.list_product_results(
+        product_code=product_code, item_type=item_type, source=source, lot_id=lot_id,
+        date_from=date_from, date_to=date_to, limit=limit,
     )
 
 
-@router.get("/production-results/summary", response_model=list[ProductionSummaryRow], tags=["Production"])
-def get_production_summary(
-    group_by: Literal["product", "line"] = "product",
-) -> list[dict[str, Any]]:
-    rows = db.production_summary(group_by=group_by)
-    return [{"group": r[group_by], **{k: v for k, v in r.items() if k != group_by}} for r in rows]
+@router.post("/product-results", tags=["Product"])
+def create_product_result(payload: ProductResultCreate) -> dict[str, Any]:
+    try:
+        return db.register_product_result(
+            lot_id=payload.lot_id, item_type=payload.item_type,
+            good_qty=payload.good_qty, scrap_qty=payload.scrap_qty,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.get("/production-results/{result_id}", response_model=ProductionResult, tags=["Production"])
-def get_production_result(result_id: int) -> dict[str, Any]:
-    row = db.get_production_result(result_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"production result {result_id} not found")
-    return row
+@router.post("/packaging", tags=["Product"])
+def create_packaging(payload: PackagingCreate) -> dict[str, Any]:
+    try:
+        return db.package(
+            product_code=payload.product_code, in_qty=payload.in_qty,
+            scrap_qty=payload.scrap_qty, lot_id=payload.lot_id,
+            eqp_id=payload.eqp_id, operator=payload.operator,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # --------------------------------------------------------------------------- #
-# 재고 (inventory)
+# 자재 인벤토리 (material)
 # --------------------------------------------------------------------------- #
 
-@router.get("/inventory", response_model=list[InventoryItem], tags=["Inventory"])
-def get_inventory(
+@router.get("/materials", response_model=list[MaterialRow], tags=["Material"])
+def get_materials(
     category: str | None = None,
     location: str | None = None,
-    q: str | None = Query(default=None, description="search item_code / item_name"),
+    q: str | None = Query(default=None, description="search material_code / material_name"),
     min_qty: float | None = Query(default=None, ge=0),
     max_qty: float | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
-    return db.list_inventory(
-        category=category, location=location, q=q, min_qty=min_qty, max_qty=max_qty
-    )
+    return db.list_materials(category=category, location=location, q=q,
+                             min_qty=min_qty, max_qty=max_qty)
 
 
-@router.get("/inventory/facets", response_model=InventoryFacets, tags=["Inventory"])
-def get_inventory_facets() -> dict[str, Any]:
-    return db.inventory_facets()
+@router.get("/materials/by-step", response_model=list[MaterialByStepRow], tags=["Material"])
+def get_materials_by_step(step_code: str | None = None) -> list[dict[str, Any]]:
+    """공정별 자재 소요/잔량 (BOM ⋈ material)."""
+    return db.materials_by_step(step_code=step_code)
 
 
-@router.get("/inventory/{item_code}", response_model=InventoryItem, tags=["Inventory"])
-def get_inventory_item(item_code: str) -> dict[str, Any]:
-    row = db.get_inventory_item(item_code)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"inventory item {item_code!r} not found")
-    return row
+@router.post("/materials/receipt", response_model=MaterialRow, tags=["Material"])
+def create_material_receipt(payload: MaterialReceipt) -> dict[str, Any]:
+    try:
+        return db.receive_material(
+            material_code=payload.material_code, qty=payload.qty,
+            material_name=payload.material_name, category=payload.category,
+            uom=payload.uom, location=payload.location,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # --------------------------------------------------------------------------- #
-# 재공 (WIP)
+# BOM
 # --------------------------------------------------------------------------- #
 
-@router.get("/wip", response_model=list[WipItem], tags=["WIP"])
-def get_wip(step_code: str | None = None) -> list[dict[str, Any]]:
-    return db.get_wip(step_code=step_code)
+@router.get("/bom", response_model=list[BomRow], tags=["BOM"])
+def get_bom(product_code: str | None = None, step_code: str | None = None) -> list[dict[str, Any]]:
+    return db.list_bom(product_code=product_code, step_code=step_code)
+
+
+@router.put("/bom", response_model=BomRow, tags=["BOM"])
+def put_bom(payload: BomUpsert) -> dict[str, Any]:
+    try:
+        return db.upsert_bom(
+            product_code=payload.product_code, step_code=payload.step_code,
+            material_code=payload.material_code, qty_per_wafer=payload.qty_per_wafer,
+            uom=payload.uom,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/bom/{bom_id}", tags=["BOM"])
+def remove_bom(bom_id: int) -> dict[str, Any]:
+    if not db.delete_bom(bom_id):
+        raise HTTPException(status_code=404, detail=f"bom {bom_id} not found")
+    return {"deleted": bom_id}

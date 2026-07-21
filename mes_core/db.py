@@ -456,3 +456,115 @@ def register_product_result(lot_id, item_type, good_qty, scrap_qty=0):
         )
         return dict(conn.execute("SELECT * FROM product_result WHERE id = ?", (pr_id,)).fetchone())
 
+
+# --------------------------------------------------------------------------- #
+# 로트 (lot) + 재공 (WIP, derived)
+# --------------------------------------------------------------------------- #
+
+def _next_lot_id(conn) -> str:
+    row = conn.execute(
+        "SELECT lot_id FROM lot WHERE lot_id LIKE 'LOT%' ORDER BY lot_id DESC LIMIT 1"
+    ).fetchone()
+    n = 0
+    if row:
+        try:
+            n = int(str(row["lot_id"])[3:])
+        except ValueError:
+            n = 0
+    return f"LOT{n + 1:04d}"
+
+
+def start_lot(product_code, start_qty, priority="Normal", lot_id=None):
+    start_qty = int(start_qty)
+    if start_qty <= 0:
+        raise ValueError(f"start_qty must be > 0, got {start_qty}")
+    with get_conn() as conn:
+        prod = conn.execute("SELECT * FROM product WHERE product_code = ?", (product_code,)).fetchone()
+        if prod is None:
+            raise ValueError(f"unknown product_code: {product_code!r}")
+        first = conn.execute(
+            "SELECT step_code FROM process_step WHERE stage='FAB' ORDER BY seq LIMIT 1"
+        ).fetchone()
+        if first is None:
+            raise ValueError("no FAB process steps defined")
+        if lot_id is None:
+            lot_id = _next_lot_id(conn)
+        conn.execute(
+            "INSERT INTO lot (lot_id, product_code, tech_node, start_qty, wafer_qty,"
+            " priority, current_step, status, start_date) VALUES (?,?,?,?,?,?,?,?,?)",
+            (lot_id, product_code, prod["tech_node"], start_qty, start_qty,
+             priority, first["step_code"], "Running", _now_iso()[:10]),
+        )
+    return get_lot(lot_id)
+
+
+def get_lot(lot_id):
+    with get_conn() as conn:
+        lot = conn.execute(
+            "SELECT l.*, p.product_name FROM lot l "
+            "LEFT JOIN product p ON p.product_code = l.product_code WHERE l.lot_id = ?",
+            (lot_id,),
+        ).fetchone()
+        if lot is None:
+            return None
+        hist = conn.execute(
+            "SELECT pr.*, ps.step_name FROM process_result pr "
+            "LEFT JOIN process_step ps ON ps.step_code = pr.step_code "
+            "WHERE pr.lot_id = ? ORDER BY pr.id",
+            (lot_id,),
+        ).fetchall()
+    out = dict(lot)
+    start_qty = out.get("start_qty") or 0
+    wafer_qty = out.get("wafer_qty") or 0
+    out["cumulative_yield"] = round(wafer_qty / start_qty * 100, 2) if start_qty else 0.0
+    out["history"] = [dict(h) for h in hist]
+    return out
+
+
+def list_lots(status=None, product_code=None, current_step=None,
+              priority=None, tech_node=None, limit=200):
+    sql = (
+        "SELECT l.*, p.product_name FROM lot l "
+        "LEFT JOIN product p ON p.product_code = l.product_code WHERE 1=1"
+    )
+    args: list[Any] = []
+    if status:
+        sql += " AND l.status = ?"; args.append(status)
+    if product_code:
+        sql += " AND l.product_code = ?"; args.append(product_code)
+    if current_step:
+        sql += " AND l.current_step = ?"; args.append(current_step)
+    if priority:
+        sql += " AND l.priority = ?"; args.append(priority)
+    if tech_node:
+        sql += " AND l.tech_node = ?"; args.append(tech_node)
+    sql += " ORDER BY l.lot_id LIMIT ?"; args.append(limit)
+    with get_conn() as conn:
+        return _rows(conn.execute(sql, args))
+
+
+def list_lot_ids(status=None) -> list[str]:
+    sql = "SELECT lot_id FROM lot"
+    args: list[Any] = []
+    if status:
+        sql += " WHERE status = ?"; args.append(status)
+    sql += " ORDER BY lot_id"
+    with get_conn() as conn:
+        return [r[0] for r in conn.execute(sql, args)]
+
+
+def get_wip(step_code=None):
+    sql = (
+        "SELECT ps.seq, ps.step_code, ps.step_name, ps.stage, "
+        "       COUNT(l.lot_id) AS lot_count, COALESCE(SUM(l.wafer_qty),0) AS wafer_qty "
+        "FROM process_step ps "
+        "JOIN lot l ON l.current_step = ps.step_code AND l.status != 'Done' "
+        "WHERE 1=1"
+    )
+    args: list[Any] = []
+    if step_code:
+        sql += " AND ps.step_code = ?"; args.append(step_code)
+    sql += " GROUP BY ps.seq, ps.step_code, ps.step_name, ps.stage ORDER BY ps.seq"
+    with get_conn() as conn:
+        return _rows(conn.execute(sql, args))
+

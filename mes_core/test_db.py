@@ -197,5 +197,45 @@ class ProductResultTests(DbTestBase):
             self.db.register_product_result("NOPE", "FIN", 10)
 
 
+class LotTests(DbTestBase):
+    def setUp(self):
+        super().setUp()
+        self._seed_master()
+
+    def test_start_lot_creates_running_at_first_step(self):
+        db = self.db
+        lot = db.start_lot("P1", 25, priority="Hot")
+        self.assertEqual(lot["status"], "Running")
+        self.assertEqual(lot["current_step"], "PHOTO")  # lowest seq FAB step
+        self.assertEqual(lot["wafer_qty"], 25)
+        self.assertEqual(lot["start_qty"], 25)
+        self.assertTrue(lot["lot_id"].startswith("LOT"))
+        self.assertEqual(lot["cumulative_yield"], 100.0)
+
+    def test_start_lot_unknown_product_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.start_lot("NOPE", 25)
+
+    def test_start_lot_bad_qty_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.start_lot("P1", 0)
+
+    def test_list_lots_filters_by_status(self):
+        db = self.db
+        db.start_lot("P1", 25)
+        db.start_lot("P1", 12)
+        self.assertEqual(len(db.list_lots(status="Running")), 2)
+        self.assertEqual(db.list_lots(status="Done"), [])
+
+    def test_get_wip_groups_non_done_lots(self):
+        db = self.db
+        db.start_lot("P1", 25)
+        db.start_lot("P1", 12)
+        wip = db.get_wip()
+        photo = [w for w in wip if w["step_code"] == "PHOTO"][0]
+        self.assertEqual(photo["lot_count"], 2)
+        self.assertEqual(photo["wafer_qty"], 37)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,41 +2,20 @@
 
 A **throwaway, on-demand mock MES** (Manufacturing Execution System) for a
 **semiconductor fab**, built purely as a **connection point for agent demos**.
+One shared SQLite database — modelling a **two-stage fab** (FAB → Packaging),
+BOM-driven material consumption, and two product inventories (SEMI + FIN) — is
+exposed through **three surfaces**:
 
-One shared SQLite database is exposed through **three surfaces**:
-
-| Surface | Audience | Endpoint | MES functions |
+| Surface | Audience | Endpoint | Scope |
 | --- | --- | --- | --- |
-| **Web console** | Human | `/` | ALL 7 (view + input) + summary **dashboard** — your control panel |
-| **REST API** | Agent | `/api` (docs at `/api/docs`) | 실적입력 · 실적조회 · 재고조회 · 재공조회 |
-| **MCP server** | Agent | `/mcp` (streamable HTTP) | 공정입력 · 공정조회 · 로트조회 |
+| **Web console** | Human | `/` | All MES functions (view + input) + dashboard |
+| **REST API** | Agent / key | `/api` (docs: `/api/docs`) | Product · Material · BOM |
+| **MCP server** | Agent / key | `/mcp` (streamable HTTP) | Process · Lot |
 
-> **MVP / demo only.** A single shared **demo API key** (`changjuahn`) gates the
-> agent surfaces (REST + MCP); there is otherwise no real security, no scale/HA.
-> The database is
-> **ephemeral** and **re-seeded on every cold start**, so every demo run gets a
-> fresh, identical fab snapshot. Optimised for simplicity and the cheapest
-> possible Azure footprint.
-
----
-
-## Function → surface map
-
-Each agent channel has at least one register (입력) and one query (조회):
-
-| Function | Web | REST API | MCP |
-| --- | :---: | :---: | :---: |
-| 실적 입력 — register production result | ✅ | ✅ `POST /api/production-results` | |
-| 실적 조회 — production results | ✅ | ✅ `GET /api/production-results` | |
-| 재고 조회 — inventory | ✅ | ✅ `GET /api/inventory` | |
-| 재공 조회 — WIP | ✅ | ✅ `GET /api/wip` | |
-| 공정 입력 — register process move | ✅ | | ✅ `register_process_move` |
-| 공정 조회 — route / history | ✅ | | ✅ `get_process_route` / `get_process_history` |
-| 로트 조회 — lot | ✅ | | ✅ `get_lot` / `list_lots` |
-
-Because all three surfaces read and write the **same** SQLite file, data entered
-on one channel is immediately visible on the others (e.g. a lot moved via the MCP
-`register_process_move` tool shows its new step in the web console and in `get_lot`).
+> **MVP / demo only.** The database is **ephemeral** and **re-seeded on every
+> cold start**, so every demo run gets a fresh, identical fab snapshot. A single
+> shared demo key (`changjuahn`) gates the agent surfaces; there is no real
+> security.
 
 ---
 
@@ -52,163 +31,166 @@ flowchart LR
     ingress -->|:8080| proxy[proxy: Caddy]
     proxy -->|/mcp*| mcp[mcp: MCP server :8001]
     proxy -->|/* | api[api: FastAPI web + REST :8000]
-    seed[[init: python -m mes_core.seed]] -. writes .-> db[( /data/mes.db<br/>EmptyDir )]
+    seed[[init: python -m mes_core.seed]] -. writes .-> db[( /data/mes.db\nEmptyDir )]
     api <--> db
     mcp <--> db
 ```
 
-- **init container** — runs `python -m mes_core.seed` to build the schema and
-  seed the fab dataset **before** the app containers start (no seeding race).
-  Runs on every cold start → fresh, reproducible data each run.
-- **api container** — FastAPI/Uvicorn on `:8000`. Serves the web console (`/`)
-  and the REST API (`/api/*`, OpenAPI at `/api/docs`).
-- **mcp container** — MCP Python SDK (streamable HTTP) on `:8001` at `/mcp`.
-- **proxy container** — Caddy. The **single external ingress** (targetPort 8080);
-  routes `/mcp*` → `mcp:8001`, everything else → `api:8000`. Gives one clean
-  HTTPS FQDN + TLS, with response buffering disabled for SSE/streaming.
+| Container | Image | Role |
+| --- | --- | --- |
+| **seed** (init) | `mock-mes-app` | Runs `python -m mes_core.seed` once before app containers start; exits |
+| **api** | `mock-mes-app` | FastAPI/Uvicorn on `:8000` — web console (`/`) + REST (`/api`) |
+| **mcp** | `mock-mes-app` | MCP streamable HTTP on `:8001` at `/mcp` |
+| **proxy** | `mock-mes-proxy` | Caddy on `:8080` — single external ingress, routes `/mcp*` → mcp, `/*` → api |
+
+Two public GHCR images are built by `.github/workflows/images.yml`:
+`ghcr.io/changju-ahn/mock-mes-app` and `ghcr.io/changju-ahn/mock-mes-proxy`.
 
 Sizing: each container **0.25 vCPU / 0.5 GiB** (ACA minimum), `minReplicas=0`
-(~$0 when idle), `maxReplicas=1` (single replica keeps the shared `EmptyDir`
-consistent).
-
-Consumer endpoints once deployed:
-
-- Web console — `https://<fqdn>/`
-- REST API — `https://<fqdn>/api` (interactive docs `https://<fqdn>/api/docs`)
-- MCP server — `https://<fqdn>/mcp`
+(~$0 when idle), `maxReplicas=1` (single replica; shared `EmptyDir` is per-replica).
 
 ---
 
-## Tech stack
+## Data model
 
-Python 3.12 · FastAPI + Uvicorn (web + REST) · Jinja2 + a little HTMX/vanilla JS ·
-official MCP Python SDK (`mcp`, streamable HTTP) · built-in `sqlite3` (WAL mode +
-`busy_timeout` for safe multi-process access). One shared `mes_core` package
-(schema, data access, seed) imported by both the API and MCP surfaces. One Docker
-image with three entrypoints (`seed` / `api` / `mcp`) plus a tiny Caddy proxy image.
+Nine tables across two stages (**FAB** and **Packaging**), one BOM, and two
+inventories.
 
-```
-mes_core/      db.py (schema + WAL connection + data access), seed.py
-api/           main.py (FastAPI), rest.py, web.py, templates/, static/, tests/
-mcp_server/    server.py (FastMCP tools), __main__.py, test_server.py
-proxy/         Caddyfile, Dockerfile
-infra/         main.bicep, deploy.sh
-Dockerfile     one app image, three entrypoints
-docker-compose.yml   reference topology (Docker is not used for local dev)
-.github/workflows/images.yml   build & push the two public GHCR images
-```
-
----
-
-## Data model (semiconductor fab)
-
-| Table | 한글 | Notes |
+| Table | 한글 | Key columns |
 | --- | --- | --- |
-| `lot` | 로트 | lot_id, product, tech_node, **start_qty**, wafer_qty (current), priority, current_step, status, start_date |
-| `process_step` | 공정 (route) | seq, step_code, step_name, operation, eqp_type |
-| `process_history` | 공정 이력/실적 | lot_id, step_code, eqp_id, **in_qty, out_qty, scrap_qty, defect_code**, in_time, out_time, operator, result — written by 공정 입력 |
-| `inventory` | 재고 | item_code, item_name, category, qty, uom, location |
-| `production_result` | 실적 | result_date, line, eqp_id, product, good_qty, scrap_qty, yield_pct — written by 실적 입력 |
-| `equipment` | 설비 | eqp_id, eqp_name, type, status |
+| `product` | 제품 | product_code, product_name, tech_node |
+| `process_step` | 공정 | seq, step_code, step_name, eqp_type, stage (`FAB`/`PACK`) |
+| `lot` | 로트 | lot_id, product_code, wafer_qty, current_step, status (`Running`/`Hold`/`Done`) |
+| `process_result` | 공정실적 | lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty, defect_code, result |
+| `material` | 자재 | material_code, material_name, category, qty, uom, location |
+| `bom` | BOM | product_code, step_code, material_code, qty_per_wafer, uom |
+| `product_inventory` | 제품재고 | product_code, item_type (`SEMI`/`FIN`), qty |
+| `product_result` | 제품실적 | lot_id, product_code, item_type, good_qty, scrap_qty, source (`AUTO_FAB`/`AUTO_PACK`/`MANUAL`) |
+| `equipment` | 설비 | eqp_id, eqp_name, eqp_type, status |
 
-**WIP (재공)** is a **derived** query — running lots grouped by `current_step`.
+### Entity-relationship diagram
 
-### Wafer flow, defects & yield
-
-Every process move carries **quantities**: `in_qty` wafers enter the step (defaults
-to the lot's current `wafer_qty`), `scrap_qty` are lost to a defect (optional
-`defect_code`), and `out_qty = in_qty − scrap_qty` carries forward — so
-`lot.wafer_qty` **shrinks** as defects accumulate. Each lot keeps its immutable
-`start_qty`, and **cumulative yield** = `wafer_qty / start_qty × 100`. When a lot
-**passes the final step (TEST)** it is closed (`status = Done`) and a
-`production_result` (실적) is **auto-created** (good = final wafers, scrap =
-cumulative lot scrap) — linking 공정 → 실적. The **dashboard** at `/` rolls all of
-this up (wafers in/out, cumulative yield, defect rate, top defects, scrap by step).
-
-**Seeded snapshot** (reproducible, RNG-seeded): 4 products (LX9 AP 5nm, DDR5-16G
-10nm, V7 NAND 128L, PMIC-33 28nm); an 8-step route
-(Diffusion → Photo → Etch → Implant → CVD → CMP → Metrology → Test); 18 lots
-(deterministic **4 Done / 2 Hold / 12 Running**) spread across the route with
-modelled wafer loss (~88% cumulative yield, ~3% defect rate); 76 process-history
-rows; 10 inventory items (wafers, reticles, chemicals, gases, targets, finished
-goods, spares); 30 production results (26 daily + 4 auto-실적 from Done lots); 8
-pieces of equipment.
+```mermaid
+erDiagram
+    product ||--o{ lot : "produces"
+    product ||--o{ bom : "has"
+    product ||--o{ product_inventory : "stocks"
+    product ||--o{ product_result : "results"
+    process_step ||--o{ bom : "requires"
+    process_step ||--o{ process_result : "logs"
+    material ||--o{ bom : "used-in"
+    lot ||--o{ process_result : "process 공정실적"
+    lot ||--o{ product_result : "yields 제품실적"
+```
 
 ---
 
-## Connecting an agent
-
-### Authentication (demo API key)
-
-Both agent surfaces require a header key on **every** call:
+## Process flow
 
 ```
-X-API-Key: changjuahn
+Materials ──(BOM × wafers)──▶ Process results ──(TEST pass)──▶ SEMI ──(Packaging)──▶ FIN
 ```
 
-- Applies to all REST `/api/*` endpoints and the MCP `/mcp` endpoint.
-- Missing/wrong key → `401 Unauthorized`.
-- The **web console** (`/`) and the **interactive docs** (`/api/docs`,
-  `/api/openapi.json`) stay open so humans can browse without a key — in Swagger
-  UI click **Authorize** and paste `changjuahn` to try the endpoints.
-- The key is configurable via the `MES_API_KEY` env var (defaults to
-  `changjuahn`). It's a demo shared secret, not real security.
+1. **`start_lot`** — create a FAB lot (`status=Running`, `current_step=DIFF`).
+2. **`register_process_result` × 8** — move the lot through DIFF → PHOTO → ETCH →
+   IMPL → CVD → CMP → METRO → TEST. Each move:
+   - consumes BOM materials: `need = qty_per_wafer × in_qty` per (product, step) BOM row;
+     material qty floored at 0; **shortages are recorded but non-blocking**.
+   - `out_qty = in_qty − scrap_qty`; the lot's `wafer_qty` shrinks with each scrap.
+3. **TEST pass → SEMI auto-receipt** — passing the final FAB step (TEST) sets
+   `lot.status=Done` and automatically adds good wafers to `product_inventory` as
+   `SEMI` (also writes a `product_result` with `source=AUTO_FAB`).
+4. **`POST /api/packaging`** (or web `/product-inventory`) — consume SEMI stock
+   (this **blocks** if insufficient SEMI) and PKG-step BOM materials (non-blocking
+   shortages); produce FIN inventory and a `product_result` with `source=AUTO_PACK`.
+5. Manual entry at `/product-results` or `POST /api/product-results` writes a
+   `product_result` with `source=MANUAL`.
 
-### REST API (Production & Inventory)
+### Transaction flow
 
-Interactive docs and schema: `https://<fqdn>/api/docs` · `https://<fqdn>/api/openapi.json`
+```mermaid
+flowchart LR
+    RCV["receive_material"] --> M[("material")]
+    L["lot (FAB)"] -->|register_process_result| PR["process_result"]
+    PR -->|"BOM x in_qty"| M
+    PR -->|"TEST pass → SEMI in"| SEMI[("product_inventory SEMI")]
+    SEMI -->|"package: consume SEMI"| PKG["packaging"]
+    PKG -->|"PKG BOM x in_qty"| M
+    PKG -->|"FIN in"| FIN[("product_inventory FIN")]
+```
 
-Every list endpoint is **parameterized** (filters, search, sort), plus single-item
-lookups and aggregation:
+---
 
-| Endpoint | 기능 | Parameters |
+## Surfaces & endpoints
+
+### Web console — `/` (all open, no key)
+
+| Page | URL | Actions |
 | --- | --- | --- |
-| `GET /api/products` | product list | — |
-| `GET /api/production-results` | 실적 조회 | `product?`, `line?`, `eqp_id?`, `date_from?`, `date_to?`, `min_yield?`, `sort?` (date/yield/good/scrap), `order?` (asc/desc), `limit?` |
-| `POST /api/production-results` | 실적 입력 | body: `product`, `good_qty`, `scrap_qty?`, `line?`, `eqp_id?`, `result_date?`, `yield_pct?` |
-| `GET /api/production-results/summary` | 실적 aggregation | `group_by` (product/line) |
-| `GET /api/production-results/{id}` | one 실적 | path `id` (404 if missing) |
-| `GET /api/inventory` | 재고 조회 | `category?`, `location?`, `q?` (name/code search), `min_qty?`, `max_qty?` |
-| `GET /api/inventory/facets` | filter values | — (distinct categories + locations) |
-| `GET /api/inventory/{item_code}` | one item | path `item_code` (404 if missing) |
-| `GET /api/wip` | 재공 조회 | `step_code?` |
+| Dashboard | `/` | Summary: lots, WIP, inventory, results |
+| Lots | `/lots` | List + filter; start a lot |
+| Lot detail | `/lots/{lot_id}` | Step history, wafer qty, yield |
+| Process results | `/process` | List + register a process move |
+| Product inventory | `/product-inventory` | SEMI + FIN stock; trigger packaging |
+| Product results | `/product-results` | List; manual entry |
+| Materials | `/materials` | Inventory + by-step BOM view; receive material |
+| BOM | `/bom` | List; upsert / delete rows |
+| WIP | `/wip` | Non-Done lots grouped by step |
+| Equipment | `/equipment` | Equipment list |
+| Guide | `/guide` | Step-by-step usage walkthrough |
+
+### REST API — `/api` (requires `X-API-Key: changjuahn`)
+
+Interactive docs at **`/api/docs`** (open — no key needed to browse).
+
+| Method | Endpoint | 기능 |
+| --- | --- | --- |
+| `GET` | `/api` | Index + endpoint list |
+| `GET` | `/api/health` | DB status + row counts |
+| `GET` | `/api/products` | Product list |
+| `GET` | `/api/product-inventory` | SEMI / FIN stock (`?product_code`, `?item_type`) |
+| `GET` | `/api/product-results` | Product results (`?product_code`, `?item_type`, `?source`, `?lot_id`, `?date_from`, `?date_to`, `?limit`) |
+| `POST` | `/api/product-results` | Manual product result entry |
+| `POST` | `/api/packaging` | Run packaging (SEMI → FIN) |
+| `GET` | `/api/materials` | Material inventory (`?category`, `?location`, `?q`, `?min_qty`, `?max_qty`) |
+| `GET` | `/api/materials/by-step` | BOM × material on-hand per step (`?step_code`) |
+| `POST` | `/api/materials/receipt` | Receive material (upsert qty) |
+| `GET` | `/api/bom` | BOM rows (`?product_code`, `?step_code`) |
+| `PUT` | `/api/bom` | Upsert a BOM row |
+| `DELETE` | `/api/bom/{bom_id}` | Delete a BOM row |
+
+### MCP server — `/mcp` (requires `X-API-Key: changjuahn`)
+
+Streamable HTTP (`stateless_http=True`). Seven tools:
+
+| Tool | 기능 |
+| --- | --- |
+| `start_lot` | Create a FAB lot (product_code, start_qty, priority?) |
+| `register_process_result` | Record a process move; returns shortages + semi_receipt |
+| `get_lot` | One lot with history, cumulative yield |
+| `list_lots` | Filter by status, product_code, current_step, priority, tech_node |
+| `get_process_route` | Route steps (step_code?, eqp_type?, stage?) |
+| `list_process_results` | Process results (lot_id?, step_code?, result?, has_scrap?, ...) |
+| `get_wip` | Non-Done lots grouped by current step (step_code?) |
+
+---
+
+## Agent connection examples
+
+### curl — REST
 
 ```bash
-# 실적 조회 — top-yielding V7 NAND results
-curl -H "X-API-Key: changjuahn" \
-  "https://<fqdn>/api/production-results?product=V7%20NAND&min_yield=95&sort=yield&order=desc&limit=5"
+# SEMI + FIN inventory
+curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/product-inventory"
 
-# 실적 입력 — register a result (yield auto-computed if omitted)
-curl -X POST "https://<fqdn>/api/production-results" \
+# Run packaging: consume 100 SEMI wafers → FIN
+curl -X POST "https://<fqdn>/api/packaging" \
   -H "X-API-Key: changjuahn" \
-  -H 'content-type: application/json' \
-  -d '{"product":"LX9 AP","good_qty":480,"scrap_qty":12,"line":"FAB1-L1"}'
-
-# 실적 aggregation by product
-curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/production-results/summary?group_by=product"
-
-# 재고 조회 — search + qty filter; and facets / single item
-curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/inventory?q=wafer&min_qty=1000"
-curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/inventory/facets"
-curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/inventory/RAW-WAFER-300"
-
-# 재공 조회 — one step
-curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/wip?step_code=ETCH"
+  -H "Content-Type: application/json" \
+  -d '{"product_code": "LX9-AP-5NM", "in_qty": 100}'
 ```
 
-### MCP server (Process & Lot)
-
-Streamable-HTTP endpoint: `https://<fqdn>/mcp`. Tools:
-
-| Tool | 기능 | Parameters |
-| --- | --- | --- |
-| `register_process_move` | 공정 입력 | `lot_id`, `step_code`, `eqp_id?`, `in_qty?`, `scrap_qty?`, `defect_code?`, `operator?`, `result?` |
-| `get_process_route` | 공정 조회 (route) | `step_code?`, `eqp_type?` |
-| `get_process_history` | 공정 조회 (history) | `lot_id?`, `step_code?`, `result?`, `operator?`, `defect_code?`, `has_scrap?`, `limit?` |
-| `get_lot` | 로트 조회 (one) | `lot_id` (returns wafer qty + `cumulative_yield` + history) |
-| `list_lots` | 로트 조회 (list) | `status?`, `product?`, `current_step?`, `priority?`, `tech_node?`, `limit?` |
-
-Example with the MCP Python SDK:
+### Python — MCP
 
 ```python
 import asyncio
@@ -216,93 +198,85 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 async def main():
+    url = "https://<fqdn>/mcp"
     headers = {"X-API-Key": "changjuahn"}
-    async with streamablehttp_client("https://<fqdn>/mcp", headers=headers) as (r, w, _):
+    async with streamablehttp_client(url, headers=headers) as (r, w, _):
         async with ClientSession(r, w) as s:
             await s.initialize()
-            print([t.name for t in (await s.list_tools()).tools])
-            # 공정 입력 with 3 scrapped wafers (out = in - scrap; lot shrinks)
-            await s.call_tool("register_process_move",
-                              {"lot_id": "LOT0007", "step_code": "ETCH",
-                               "eqp_id": "EQP-ETCH01", "scrap_qty": 3,
-                               "defect_code": "Etch-Residue", "operator": "agent"})
-            # 공정 조회 — only moves that scrapped wafers
-            print(await s.call_tool("get_process_history", {"has_scrap": True}))
-            print(await s.call_tool("get_lot", {"lot_id": "LOT0007"}))
+            # Start a new FAB lot
+            lot = await s.call_tool("start_lot",
+                                    {"product_code": "LX9-AP-5NM", "start_qty": 25})
+            print(lot)
+            # Check WIP grouped by step
+            wip = await s.call_tool("get_wip", {})
+            print(wip)
 
 asyncio.run(main())
 ```
 
-Popular MCP clients can point straight at `https://<fqdn>/mcp` (transport: HTTP /
-streamable HTTP) — configure a header `X-API-Key: changjuahn`.
+Popular MCP clients (e.g. Claude Desktop, VS Code) can point directly at
+`https://<fqdn>/mcp` (transport: streamable HTTP) with header `X-API-Key: changjuahn`.
 
 ---
 
-## Local development (no Docker required)
+## Local development
 
 ```bash
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 
-export MES_DB_PATH="$PWD/data/mes.db"   # default in-container is /data/mes.db
-python -m mes_core.seed                 # build + seed the shared DB
+# Seed the DB (creates data/mes.db)
+MES_DB_PATH=$(pwd)/data/mes.db python -m mes_core.seed
 
-# terminal 1 — web console + REST
-uvicorn api.main:app --host 0.0.0.0 --port 8000
-# terminal 2 — MCP server
-python -m mcp_server                    # serves /mcp on :8001
+# Terminal 1 — web console + REST API
+uvicorn api.main:app --port 8000
+
+# Terminal 2 — MCP server (serves /mcp on :8001)
+python -m mcp_server
 ```
 
-Then open <http://localhost:8000/> and <http://localhost:8000/api/docs>, and
-point an MCP client at <http://localhost:8001/mcp>.
+Browse: <http://localhost:8000/> · <http://localhost:8000/api/docs>  
+MCP endpoint: `http://localhost:8001/mcp`
 
-Run the tests:
+Run tests:
 
 ```bash
-python -m unittest mes_core.test_db api.tests.test_app mcp_server.test_server -v
+python -m unittest mes_core.test_db api.tests.test_app mcp_server.test_server
 ```
 
 ---
 
-## Deploy to Azure (Docker-less, cheapest)
+## Deploy / redeploy / teardown
 
-Container images are built **in the cloud** by GitHub Actions and published as
-**public** images to GHCR, so Azure Container Apps needs no pull secret.
+Images are built and pushed to public GHCR by CI — Azure needs no registry credentials.
 
-1. **Push** the branch. `.github/workflows/images.yml` builds and pushes:
-   - `ghcr.io/changju-ahn/mock-mes-app` (init + api + mcp share this image)
-   - `ghcr.io/changju-ahn/mock-mes-proxy` (Caddy)
+**1 · Push branch** → `.github/workflows/images.yml` builds and pushes:
+- `ghcr.io/changju-ahn/mock-mes-app:latest`
+- `ghcr.io/changju-ahn/mock-mes-proxy:latest`
 
-   Watch it: `gh run watch`. Ensure both packages are **public**
-   (GitHub → Packages → each package → *Package settings* → *Change visibility*
-   → Public). This is a one-time setting per package.
+Ensure both packages are set to **Public** in GitHub (Packages → *Package settings* → *Change visibility*). One-time step per package.
 
-2. **Deploy** the infrastructure:
+**2 · Deploy**
 
-   ```bash
-   ./infra/deploy.sh                          # rg-mock-mes-kr / koreacentral
-   # or override:
-   RG=rg-mock-mes-kr LOCATION=eastus ./infra/deploy.sh
-   ```
+```bash
+./infra/deploy.sh          # defaults: rg=rg-mock-mes-kr, region=koreacentral
+# Override:
+RG=rg-mock-mes-kr LOCATION=koreacentral ./infra/deploy.sh
+```
 
-   The script registers the `Microsoft.App` / `Microsoft.OperationalInsights`
-   providers and the `containerapp` CLI extension, creates the resource group,
-   and deploys `infra/main.bicep`. It prints the live FQDN and the three endpoints.
+The script creates the resource group and deploys `infra/main.bicep` (ACA
+environment + Container App). It prints the three live endpoints on completion.
 
-### Redeploy
-
-Push again (CI rebuilds `:latest`), then re-run `./infra/deploy.sh` (idempotent),
-or force the app to pick up a fresh image:
+**3 · Redeploy** (pick up a new `:latest` or force a cold-start reseed):
 
 ```bash
 az containerapp update -g rg-mock-mes-kr -n mock-mes \
   --revision-suffix "r$(date +%s)"
 ```
 
-Because the DB is an `EmptyDir`, any new replica re-runs the seed init container
-→ a fresh dataset.
+Each new revision re-runs the seed init container → fresh, reproducible dataset.
 
-### Teardown
+**4 · Teardown**
 
 ```bash
 az group delete -n rg-mock-mes-kr --yes --no-wait
@@ -312,24 +286,32 @@ az group delete -n rg-mock-mes-kr --yes --no-wait
 
 ## Cost notes
 
-- **Scale-to-zero** (`minReplicas=0`): with no traffic the app runs **zero
-  replicas** and Container Apps bills ~**$0** for compute (you pay only when a
-  request wakes it, plus a tiny cost for the Log Analytics workspace / storage).
-- Single replica at **0.75 vCPU / 1.5 GiB** total (3 × 0.25 vCPU / 0.5 GiB) only
-  while serving requests. First request after idle incurs a **cold start**
-  (containers pull + the seed init container runs).
+- **Scale-to-zero** (`minReplicas=0`): ~**$0** compute when idle (billed only
+  during active request handling, plus a small Log Analytics cost).
+- Each container: **0.25 vCPU / 0.5 GiB** (ACA minimum); three app containers
+  total **0.75 vCPU / 1.5 GiB** per replica.
+- Single replica (`maxReplicas=1`): the shared `EmptyDir` SQLite is per-replica.
+- SQLite is **ephemeral** — data is lost on every cold start; the seed init
+  container restores the deterministic snapshot automatically.
 - Public GHCR images → **no** Azure Container Registry needed.
-- Delete the resource group to drop cost to zero.
 
 ---
 
-## Assumptions
+## Seeded data snapshot
 
-- Single-replica by design: the shared SQLite lives on a per-replica `EmptyDir`,
-  so horizontal scale is intentionally capped at 1 (`maxReplicas=1`).
-- Ephemeral data is a feature, not a bug — every cold start re-seeds, which keeps
-  demos reproducible. Nothing is persisted between replica lifetimes.
-- A single shared demo key (`X-API-Key: changjuahn`) gates the REST + MCP agent
-  surfaces so calls look like any other keyed API/MCP; it is **not** real security.
-  The human web console and `/api/docs` stay open. Do not put real or sensitive
-  data in it.
+Re-seeded on every cold start (deterministic):
+
+| Entity | Count |
+| --- | --- |
+| Products | 4 |
+| Process steps | 9 (8 FAB: DIFF · PHOTO · ETCH · IMPL · CVD · CMP · METRO · TEST; + 1 PACK: PKG) |
+| Equipment | 9 |
+| Materials | 12 |
+| BOM rows | **48** |
+| Lots | 16 (6 Done / 2 Hold / 8 Running) |
+| Process results | **91** |
+| Product inventory rows | 7 (SEMI + FIN across products) |
+| Product results | 10 (6 AUTO_FAB + 3 AUTO_PACK + 1 MANUAL) |
+
+> **Note:** the database is ephemeral. All data above is re-created identically
+> on every cold start. Do not store anything you need to keep.

@@ -236,6 +236,48 @@ class LotTests(DbTestBase):
         self.assertEqual(photo["lot_count"], 2)
         self.assertEqual(photo["wafer_qty"], 37)
 
+    def test_get_lot_unknown_returns_none(self):
+        self.assertIsNone(self.db.get_lot("NOPE"))
+
+    def test_get_wip_excludes_done_lots(self):
+        db = self.db
+        done_lot = db.start_lot("P1", 10)
+        lot_id = done_lot["lot_id"]
+        with db.get_conn() as c:
+            c.execute("UPDATE lot SET status='Done' WHERE lot_id=?", (lot_id,))
+        running_lot = db.start_lot("P1", 5)
+        running_step = running_lot["current_step"]
+        wip = db.get_wip()
+        wip_lot_ids = set()
+        for row in wip:
+            if row["step_code"] == running_step:
+                self.assertGreaterEqual(row["lot_count"], 1)
+        # Done lot's step should not appear with lot_count that includes it
+        done_step_rows = [w for w in wip if w["step_code"] == done_lot["current_step"]]
+        if done_step_rows:
+            # The only remaining lot at that step is the running one (if same step)
+            self.assertEqual(done_step_rows[0]["lot_count"], 1)
+        else:
+            # No WIP row for that step at all is also correct (Done lot excluded)
+            pass
+        # Running lot must appear
+        self.assertTrue(any(w["step_code"] == running_step for w in wip))
+
+    def test_next_lot_id_ignores_custom_lot_ids(self):
+        db = self.db
+        # Auto-generate first: LOT0001 will exist
+        first_auto = db.start_lot("P1", 10)
+        self.assertRegex(first_auto["lot_id"], r'^LOT\d{4}$')
+        # Insert a non-numeric custom id — DESC sort puts LOTCUSTOM ahead of LOT0001
+        db.start_lot("P1", 10, lot_id="LOTCUSTOM")
+        # Auto-generate again: broken code picks LOTCUSTOM -> ValueError -> n=0 -> LOT0001 (collision!)
+        # Fixed code correctly yields LOT0002
+        auto_lot = db.start_lot("P1", 5)
+        auto_id = auto_lot["lot_id"]
+        self.assertNotEqual(auto_id, "LOTCUSTOM")
+        self.assertNotEqual(auto_id, first_auto["lot_id"])
+        self.assertRegex(auto_id, r'^LOT\d{4}$')
+
 
 if __name__ == "__main__":
     unittest.main()

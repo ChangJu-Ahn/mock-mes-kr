@@ -463,14 +463,10 @@ def register_product_result(lot_id, item_type, good_qty, scrap_qty=0):
 
 def _next_lot_id(conn) -> str:
     row = conn.execute(
-        "SELECT lot_id FROM lot WHERE lot_id LIKE 'LOT%' ORDER BY lot_id DESC LIMIT 1"
+        "SELECT MAX(CAST(SUBSTR(lot_id, 4) AS INTEGER)) FROM lot "
+        "WHERE lot_id GLOB 'LOT[0-9][0-9][0-9][0-9]*'"
     ).fetchone()
-    n = 0
-    if row:
-        try:
-            n = int(str(row["lot_id"])[3:])
-        except ValueError:
-            n = 0
+    n = row[0] or 0
     return f"LOT{n + 1:04d}"
 
 

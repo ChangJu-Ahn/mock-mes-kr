@@ -1,0 +1,29 @@
+# Caddy reverse proxy for the mock MES.
+#
+# Single external ingress on :8080 (Azure Container Apps terminates TLS and
+# forwards HTTP here). Routes:
+#   /mcp, /mcp/*  -> MCP server   (streamable HTTP, needs unbuffered streaming)
+#   everything else -> API/web console
+#
+# Upstreams default to localhost (all containers share one network namespace
+# inside an ACA replica). For docker-compose they are overridden via env to the
+# service names (api:8000 / mcp:8001).
+
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	@mcp path /mcp /mcp/*
+	handle @mcp {
+		reverse_proxy {$MCP_UPSTREAM:localhost:8001} {
+			# Disable response buffering so SSE / streamable-HTTP flushes promptly.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy {$API_UPSTREAM:localhost:8000}
+	}
+}

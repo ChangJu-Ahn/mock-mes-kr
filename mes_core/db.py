@@ -784,3 +784,13 @@ def get_dashboard_summary() -> dict[str, Any]:
         "equipment": equipment,
     }
 
+
+
+def list_equipment() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        return _rows(conn.execute("SELECT * FROM equipment ORDER BY eqp_id"))
+
+
+def list_step_codes() -> list[str]:
+    with get_conn() as conn:
+        return [r[0] for r in conn.execute("SELECT step_code FROM process_step ORDER BY seq")]

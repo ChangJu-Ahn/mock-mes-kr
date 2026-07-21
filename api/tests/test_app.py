@@ -91,3 +91,62 @@ class RestApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         bom_id = r.json()["id"]
         self.assertEqual(self.client.delete(f"/api/bom/{bom_id}").status_code, 200)
+
+
+class WebConsoleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MES_DB_PATH"] = os.path.join(os.getcwd(), "data", "mes_web_unittest.db")
+        from mes_core import db, seed
+        db.reset_db()
+        seed.seed()
+        from api.main import app
+        cls.db = db
+        cls.client = TestClient(app)  # web is open (no key)
+
+    @classmethod
+    def tearDownClass(cls):
+        for suffix in ("", "-shm", "-wal"):
+            path = os.environ["MES_DB_PATH"] + suffix
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_all_pages_render(self):
+        for path in ("/", "/lots", "/process", "/product-inventory",
+                     "/product-results", "/materials", "/bom", "/wip", "/equipment"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_lot_detail_renders(self):
+        lot_id = self.db.list_lot_ids()[0]
+        self.assertEqual(self.client.get(f"/lots/{lot_id}").status_code, 200)
+
+    def test_start_lot_form(self):
+        before = len(self.db.list_lot_ids())
+        r = self.client.post("/lots/start",
+                             data={"product_code": "LX9", "start_qty": "25", "priority": "Hot"},
+                             follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(len(self.db.list_lot_ids()), before + 1)
+
+    def test_process_result_form(self):
+        lot = self.db.start_lot("DDR5", 20)
+        r = self.client.post("/process/results",
+                             data={"lot_id": lot["lot_id"], "step_code": "PHOTO", "scrap_qty": "1"},
+                             follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(self.db.get_lot(lot["lot_id"])["current_step"], "PHOTO")
+
+    def test_material_receive_form(self):
+        r = self.client.post("/materials/receive",
+                             data={"material_code": "PR-EUV", "qty": "5"},
+                             follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+
+    def test_bom_upsert_and_delete_form(self):
+        r = self.client.post("/bom", data={
+            "product_code": "LX9", "step_code": "METRO",
+            "material_code": "GAS-AR", "qty_per_wafer": "0.02"}, follow_redirects=False)
+        self.assertEqual(r.status_code, 303)
+        bom_id = self.db.list_bom(product_code="LX9", step_code="METRO")[0]["id"]
+        r2 = self.client.post(f"/bom/{bom_id}/delete", follow_redirects=False)
+        self.assertEqual(r2.status_code, 303)

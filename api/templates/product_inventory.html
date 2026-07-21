@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Product Inventory · Mock MES{% endblock %}
+{% block content %}
+<h1>제품 인벤토리 Product inventory (SEMI / FIN)</h1>
+<section class="panel">
+  <h2>패키징 Packaging (SEMI → FIN)</h2>
+  <form method="post" action="/packaging" class="row">
+    <label>Product
+      <select name="product_code" required>
+        {% for p in products %}<option value="{{ p.product_code }}">{{ p.product_code }}</option>{% endfor %}
+      </select></label>
+    <label>In qty (SEMI) <input type="number" name="in_qty" min="1" required></label>
+    <label>Scrap <input type="number" name="scrap_qty" value="0" min="0"></label>
+    <label>Lot <input name="lot_id" list="lot_ids"></label>
+    <datalist id="lot_ids">{% for l in lot_ids %}<option value="{{ l }}">{% endfor %}</datalist>
+    <label>Eqp <input name="eqp_id" list="eqps"></label>
+    <datalist id="eqps">{% for e in equipment %}<option value="{{ e.eqp_id }}">{% endfor %}</datalist>
+    <button type="submit">Package</button>
+  </form>
+</section>
+<table><thead><tr><th>Product</th><th>Name</th><th>Type</th><th>Qty</th><th>UoM</th><th>Location</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.product_code }}</td><td>{{ r.product_name or '' }}</td>
+  <td>{{ r.item_type }}</td><td>{{ r.qty|round(0) }}</td><td>{{ r.uom }}</td><td>{{ r.location or '' }}</td></tr>
+{% else %}<tr><td colspan="6">Empty</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

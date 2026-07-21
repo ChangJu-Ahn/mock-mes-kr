@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}BOM · Mock MES{% endblock %}
+{% block content %}
+<h1>BOM</h1>
+<section class="panel">
+  <h2>BOM 입력/수정 Upsert</h2>
+  <form method="post" action="/bom" class="row">
+    <label>Product
+      <select name="product_code" required>
+        {% for p in products %}<option value="{{ p.product_code }}">{{ p.product_code }}</option>{% endfor %}
+      </select></label>
+    <label>Step <input name="step_code" list="steps" required></label>
+    <datalist id="steps">{% for s in steps %}<option value="{{ s }}">{% endfor %}</datalist>
+    <label>Material <input name="material_code" list="mats" required></label>
+    <datalist id="mats">{% for m in materials %}<option value="{{ m.material_code }}">{% endfor %}</datalist>
+    <label>Qty/wafer <input type="number" step="any" name="qty_per_wafer" min="0" required></label>
+    <label>UoM <input name="uom"></label>
+    <button type="submit">Save</button>
+  </form>
+</section>
+<form method="get" action="/bom" class="row filters">
+  <label>Product <input name="product_code" value="{{ filters.product_code }}"></label>
+  <label>Step <input name="step_code" value="{{ filters.step_code }}"></label>
+  <button type="submit">Filter</button>
+</form>
+<table><thead><tr><th>ID</th><th>Product</th><th>Step</th><th>Material</th><th>Qty/wafer</th><th>UoM</th><th></th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.id }}</td><td>{{ r.product_code }}</td>
+  <td>{{ r.step_code }} {{ r.step_name or '' }}</td><td>{{ r.material_code }} {{ r.material_name or '' }}</td>
+  <td>{{ r.qty_per_wafer }}</td><td>{{ r.uom or '' }}</td>
+  <td><form method="post" action="/bom/{{ r.id }}/delete"><button type="submit" class="link">delete</button></form></td></tr>
+{% else %}<tr><td colspan="7">No BOM rows</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

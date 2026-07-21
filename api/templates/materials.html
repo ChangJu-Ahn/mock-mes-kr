@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Materials · Mock MES{% endblock %}
+{% block content %}
+<h1>자재 인벤토리 Material inventory</h1>
+<section class="panel">
+  <h2>자재 입고 Receive material</h2>
+  <form method="post" action="/materials/receive" class="row">
+    <label>Code <input name="material_code" required></label>
+    <label>Qty <input type="number" step="any" name="qty" min="0" required></label>
+    <label>Name <input name="material_name"></label>
+    <label>Category <input name="category"></label>
+    <label>UoM <input name="uom"></label>
+    <label>Location <input name="location"></label>
+    <button type="submit">Receive</button>
+  </form>
+</section>
+<form method="get" action="/materials" class="row filters">
+  <label>Category <input name="category" value="{{ filters.category }}"></label>
+  <label>Step (for BOM usage) <input name="step_code" value="{{ filters.step_code }}" list="steps"></label>
+  <datalist id="steps">{% for s in steps %}<option value="{{ s }}">{% endfor %}</datalist>
+  <button type="submit">Filter</button>
+</form>
+<h2>On-hand stock</h2>
+<table><thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Qty</th><th>UoM</th><th>Location</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.material_code }}</td><td>{{ r.material_name }}</td>
+  <td>{{ r.category }}</td><td>{{ r.qty|round(2) }}</td><td>{{ r.uom }}</td><td>{{ r.location }}</td></tr>
+{% else %}<tr><td colspan="6">Empty</td></tr>{% endfor %}
+</tbody></table>
+<h2>공정별 자재 소요 Usage by step (BOM ⋈ stock)</h2>
+<table><thead><tr><th>Step</th><th>Product</th><th>Material</th><th>Per wafer</th><th>On hand</th><th>UoM</th></tr></thead><tbody>
+{% for r in by_step %}<tr><td>{{ r.step_code }} {{ r.step_name or '' }}</td><td>{{ r.product_code }}</td>
+  <td>{{ r.material_code }} {{ r.material_name or '' }}</td><td>{{ r.qty_per_wafer }}</td>
+  <td>{{ r.on_hand_qty|round(2) }}</td><td>{{ r.uom }}</td></tr>
+{% else %}<tr><td colspan="6">No BOM rows</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

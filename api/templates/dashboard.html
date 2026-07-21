@@ -1,86 +1,73 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - Mock MES{% endblock %}
+{% block title %}Dashboard · Mock MES{% endblock %}
 {% block content %}
-<h1>Dashboard / 대시보드</h1>
-<p class="muted">Mock semiconductor-fab MES — one-page overview of lots, wafers, yield, defects and 실적.</p>
-
+<h1>Fab Dashboard</h1>
 <section class="cards">
-  <article class="card"><span>Lots (total)</span><strong>{{ summary.total_lots }}</strong><small>{{ summary.running_lots }} running · {{ summary.done_lots }} done</small></article>
-  <article class="card"><span>Wafers (start → now)</span><strong>{{ summary.current_wafers }}</strong><small>of {{ summary.total_start_wafers }} started</small></article>
-  <article class="card"><span>WIP wafers</span><strong>{{ summary.wip_wafers }}</strong><small>in running lots</small></article>
-  <article class="card"><span>Cumulative yield</span><strong>{{ summary.cumulative_yield_pct }}%</strong><small>current / start wafers</small></article>
-  <article class="card"><span>Scrap (defects)</span><strong>{{ summary.total_scrap }}</strong><small>{{ summary.defect_rate_pct }}% defect rate</small></article>
-  <article class="card"><span>실적 records</span><strong>{{ summary.result_count }}</strong><small>production results</small></article>
+  <div class="card"><div class="kpi">{{ summary.lot_total }}</div><div class="label">Lots</div></div>
+  <div class="card"><div class="kpi">{{ summary.wafers_started }}</div><div class="label">Wafers started</div></div>
+  <div class="card"><div class="kpi">{{ summary.wip_total_lots }}</div><div class="label">WIP lots</div></div>
+  <div class="card"><div class="kpi">{{ summary.semi_total|round(0) }}</div><div class="label">SEMI stock</div></div>
+  <div class="card"><div class="kpi">{{ summary.fin_total|round(0) }}</div><div class="label">FIN stock</div></div>
+  <div class="card"><div class="kpi">{{ summary.material_total_items }}</div><div class="label">Materials</div></div>
 </section>
 
-<div class="actions" style="margin-bottom:1.25rem">
-  <a class="button" href="/process">공정 입력 (register move)</a>
-  <a class="button" href="/production">실적 입력 (register result)</a>
-  <a class="button" href="/lots">로트 조회 (lots)</a>
-  <a class="button" href="/api/docs">REST API docs</a>
-</div>
-
-<div class="grid-2">
-  <section class="panel">
-    <h2>WIP by step / 재공</h2>
-    <table>
-      <thead><tr><th>Seq</th><th>Step</th><th>Lots</th><th>Wafers</th></tr></thead>
-      <tbody>
-        {% for row in summary.wip_by_step %}
-        <tr><td>{{ row.seq }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.lot_count }}</td><td>{{ row.wafer_qty }}</td></tr>
-        {% else %}<tr><td colspan="4" class="muted">No WIP</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section class="panel">
-    <h2>Top defects</h2>
-    <table>
-      <thead><tr><th>Defect</th><th>Scrap</th><th>Events</th></tr></thead>
-      <tbody>
-        {% for row in summary.top_defects %}
-        <tr><td>{{ row.defect_code }}</td><td class="bad">{{ row.scrap_qty }}</td><td>{{ row.events }}</td></tr>
-        {% else %}<tr><td colspan="3" class="muted">No defects recorded</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </section>
-</div>
-
-<div class="grid-2">
-  <section class="panel">
-    <h2>Scrap by step</h2>
-    <table>
-      <thead><tr><th>Step</th><th>Scrap</th></tr></thead>
-      <tbody>
-        {% for row in summary.top_scrap_steps %}
-        <tr><td>{{ row.step_code }} - {{ row.step_name }}</td><td class="bad">{{ row.scrap_qty }}</td></tr>
-        {% else %}<tr><td colspan="2" class="muted">No scrap</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </section>
-
-  <section class="panel">
-    <h2>Equipment / 설비</h2>
-    <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Status</th></tr></thead>
-      <tbody>
-        {% for row in summary.equipment %}
-        <tr><td>{{ row.eqp_id }}</td><td>{{ row.eqp_name }}</td><td>{{ row.type }}</td><td>{{ row.status }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </section>
-</div>
-
-<section class="panel">
-  <h2>Recent 실적 / production results</h2>
-  <table>
-    <thead><tr><th>Date</th><th>Line</th><th>Eqp</th><th>Product</th><th>Good</th><th>Scrap</th><th>Yield %</th></tr></thead>
+<div class="grid2">
+  <section>
+    <h2>WIP by step</h2>
+    <table><thead><tr><th>Seq</th><th>Step</th><th>Stage</th><th>Lots</th><th>Wafers</th></tr></thead>
     <tbody>
-      {% for row in summary.recent_results %}
-      <tr><td>{{ row.result_date }}</td><td>{{ row.line or "" }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.product }}</td><td>{{ row.good_qty }}</td><td class="bad">{{ row.scrap_qty }}</td><td>{{ row.yield_pct }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+    {% for w in summary.wip_by_step %}
+      <tr><td>{{ w.seq }}</td><td>{{ w.step_code }} {{ w.step_name }}</td><td>{{ w.stage }}</td>
+          <td>{{ w.lot_count }}</td><td>{{ w.wafer_qty }}</td></tr>
+    {% else %}<tr><td colspan="5">No WIP</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Lots by status</h2>
+    <table><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>
+    {% for s in summary.lots_by_status %}<tr><td>{{ s.status }}</td><td>{{ s.n }}</td></tr>{% endfor %}
+    </tbody></table>
+    <h2>Top defects</h2>
+    <table><thead><tr><th>Defect</th><th>Count</th></tr></thead><tbody>
+    {% for d in summary.top_defects %}<tr><td>{{ d.defect_code }}</td><td>{{ d.n }}</td></tr>
+    {% else %}<tr><td colspan="2">None</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+</div>
+
+<div class="grid2">
+  <section>
+    <h2>Low materials</h2>
+    <table><thead><tr><th>Code</th><th>Name</th><th>Qty</th><th>UoM</th></tr></thead><tbody>
+    {% for m in summary.low_materials %}<tr><td>{{ m.material_code }}</td><td>{{ m.material_name }}</td>
+        <td>{{ m.qty|round(2) }}</td><td>{{ m.uom }}</td></tr>
+    {% else %}<tr><td colspan="4">All stocked</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+  <section>
+    <h2>Equipment</h2>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Status</th></tr></thead><tbody>
+    {% for e in summary.equipment %}<tr><td>{{ e.eqp_id }}</td><td>{{ e.eqp_name }}</td>
+        <td>{{ e.type }}</td><td>{{ e.status }}</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+</div>
+
+<section>
+  <h2>Recent process results</h2>
+  <table><thead><tr><th>ID</th><th>Lot</th><th>Step</th><th>In</th><th>Out</th><th>Scrap</th><th>Defect</th><th>Result</th></tr></thead><tbody>
+  {% for r in summary.recent_process %}<tr><td>{{ r.id }}</td><td>{{ r.lot_id }}</td>
+      <td>{{ r.step_code }}</td><td>{{ r.in_qty }}</td><td>{{ r.out_qty }}</td>
+      <td>{{ r.scrap_qty }}</td><td>{{ r.defect_code or '' }}</td><td>{{ r.result }}</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<section>
+  <h2>Recent product results</h2>
+  <table><thead><tr><th>Date</th><th>Lot</th><th>Product</th><th>Type</th><th>Good</th><th>Yield</th><th>Source</th></tr></thead><tbody>
+  {% for r in summary.recent_products %}<tr><td>{{ r.result_date }}</td><td>{{ r.lot_id or '' }}</td>
+      <td>{{ r.product_code }}</td><td>{{ r.item_type }}</td><td>{{ r.good_qty }}</td>
+      <td>{{ r.yield_pct }}</td><td>{{ r.source }}</td></tr>{% endfor %}
+  </tbody></table>
 </section>
 {% endblock %}

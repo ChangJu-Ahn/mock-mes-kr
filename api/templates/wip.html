@@ -1,15 +1,10 @@
 {% extends "base.html" %}
-{% block title %}WIP - Mock MES{% endblock %}
+{% block title %}WIP · Mock MES{% endblock %}
 {% block content %}
-<h1>WIP / 재공</h1>
-<section class="panel">
-  <table>
-    <thead><tr><th>Seq</th><th>Step code</th><th>Step name</th><th>Lot count</th><th>Wafer qty</th></tr></thead>
-    <tbody>
-      {% for row in rows %}
-      <tr><td>{{ row.seq }}</td><td>{{ row.step_code }}</td><td>{{ row.step_name }}</td><td>{{ row.lot_count }}</td><td>{{ row.wafer_qty }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+<h1>재공 WIP (non-Done lots by step)</h1>
+<table><thead><tr><th>Seq</th><th>Step</th><th>Name</th><th>Stage</th><th>Lots</th><th>Wafers</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.seq }}</td><td>{{ r.step_code }}</td><td>{{ r.step_name }}</td>
+  <td>{{ r.stage }}</td><td>{{ r.lot_count }}</td><td>{{ r.wafer_qty }}</td></tr>
+{% else %}<tr><td colspan="6">No WIP</td></tr>{% endfor %}
+</tbody></table>
 {% endblock %}

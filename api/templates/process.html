@@ -1,49 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Process - Mock MES{% endblock %}
+{% block title %}Process · Mock MES{% endblock %}
 {% block content %}
-<h1>Process / 공정</h1>
+<h1>공정실적 Process results</h1>
 <section class="panel">
-  <h2>Register process move / 공정 입력</h2>
-  <p class="muted">Enter wafers in and scrap for this step. Out = In − Scrap; the lot's wafer qty carries forward. Leave In blank to use the lot's current qty. Passing the final step (TEST) auto-creates a 실적 record.</p>
-  <form method="post" action="/process/moves" class="grid-form">
-    <label>Lot
-      <select name="lot_id" required>{% for lot_id in lot_ids %}<option value="{{ lot_id }}">{{ lot_id }}</option>{% endfor %}</select>
-    </label>
-    <label>Step
-      <select name="step_code" required>{% for step in route %}<option value="{{ step.step_code }}">{{ step.seq }} {{ step.step_code }} - {{ step.step_name }}</option>{% endfor %}</select>
-    </label>
-    <label>Equipment
-      <select name="eqp_id"><option value="">None</option>{% for eqp in equipment %}<option value="{{ eqp.eqp_id }}">{{ eqp.eqp_id }} - {{ eqp.eqp_name }}</option>{% endfor %}</select>
-    </label>
-    <label>In qty <input name="in_qty" type="number" min="0" placeholder="auto (lot qty)"></label>
-    <label>Scrap qty <input name="scrap_qty" type="number" min="0" value="0"></label>
-    <label>Defect code
-      <input name="defect_code" list="defect-codes" placeholder="e.g. Particle">
-      <datalist id="defect-codes">{% for code in defect_codes %}<option value="{{ code }}">{% endfor %}</datalist>
-    </label>
-    <label>Operator <input name="operator" placeholder="kim.js"></label>
+  <h2>공정실적 입력 Register process result</h2>
+  <form method="post" action="/process/results" class="row">
+    <label>Lot <input name="lot_id" list="lot_ids" required></label>
+    <datalist id="lot_ids">{% for l in lot_ids %}<option value="{{ l }}">{% endfor %}</datalist>
+    <label>Step <input name="step_code" list="steps" required></label>
+    <datalist id="steps">{% for s in steps %}<option value="{{ s }}">{% endfor %}</datalist>
+    <label>Eqp <input name="eqp_id" list="eqps"></label>
+    <datalist id="eqps">{% for e in equipment %}<option value="{{ e.eqp_id }}">{% endfor %}</datalist>
+    <label>In qty <input type="number" name="in_qty" placeholder="(lot wafer qty)"></label>
+    <label>Scrap <input type="number" name="scrap_qty" value="0" min="0"></label>
+    <label>Defect <input name="defect_code" list="defects"></label>
+    <datalist id="defects">{% for d in defect_codes %}<option value="{{ d }}">{% endfor %}</datalist>
+    <label>Operator <input name="operator"></label>
     <label>Result
-      <select name="result"><option>Pass</option><option>Fail</option><option>Hold</option><option>Rework</option></select>
-    </label>
-    <label>In time <input name="in_time" placeholder="auto"></label>
-    <label>Out time <input name="out_time" placeholder="auto"></label>
-    <button type="submit">공정 입력</button>
+      <select name="result"><option>Pass</option><option>Rework</option><option>Fail</option></select></label>
+    <button type="submit">Record</button>
   </form>
 </section>
 
-<section class="panel">
-  <h2>Route</h2>
-  <table>
-    <thead><tr><th>Seq</th><th>Code</th><th>Name</th><th>Operation</th><th>Eqp type</th></tr></thead>
-    <tbody>{% for step in route %}<tr><td>{{ step.seq }}</td><td>{{ step.step_code }}</td><td>{{ step.step_name }}</td><td>{{ step.operation }}</td><td>{{ step.eqp_type }}</td></tr>{% endfor %}</tbody>
-  </table>
-</section>
+<h2>Route</h2>
+<table><thead><tr><th>Seq</th><th>Step</th><th>Name</th><th>Operation</th><th>Eqp type</th><th>Stage</th></tr></thead><tbody>
+{% for s in route %}<tr><td>{{ s.seq }}</td><td>{{ s.step_code }}</td><td>{{ s.step_name }}</td>
+  <td>{{ s.operation }}</td><td>{{ s.eqp_type }}</td><td>{{ s.stage }}</td></tr>{% endfor %}
+</tbody></table>
 
-<section class="panel">
-  <h2>Recent history</h2>
-  <table>
-    <thead><tr><th>ID</th><th>Lot</th><th>Step</th><th>Eqp</th><th>In</th><th>Out</th><th>Scrap</th><th>Defect</th><th>Operator</th><th>Result</th></tr></thead>
-    <tbody>{% for row in history %}<tr><td>{{ row.id }}</td><td><a href="/lots/{{ row.lot_id }}">{{ row.lot_id }}</a></td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.in_qty if row.in_qty is not none else "" }}</td><td>{{ row.out_qty if row.out_qty is not none else "" }}</td><td class="{{ 'bad' if row.scrap_qty else '' }}">{{ row.scrap_qty or 0 }}</td><td>{{ row.defect_code or "" }}</td><td>{{ row.operator or "" }}</td><td>{{ row.result }}</td></tr>{% endfor %}</tbody>
-  </table>
-</section>
+<h2>Recent results</h2>
+<table><thead><tr><th>ID</th><th>Lot</th><th>Step</th><th>In</th><th>Out</th><th>Scrap</th>
+  <th>Defect</th><th>Result</th></tr></thead><tbody>
+{% for r in results %}<tr><td>{{ r.id }}</td><td>{{ r.lot_id }}</td><td>{{ r.step_code }}</td>
+  <td>{{ r.in_qty }}</td><td>{{ r.out_qty }}</td><td>{{ r.scrap_qty }}</td>
+  <td>{{ r.defect_code or '' }}</td><td>{{ r.result }}</td></tr>{% endfor %}
+</tbody></table>
 {% endblock %}

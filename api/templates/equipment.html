@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Equipment · Mock MES{% endblock %}
+{% block content %}
+<h1>설비 Equipment</h1>
+<table><thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Status</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.eqp_id }}</td><td>{{ r.eqp_name }}</td><td>{{ r.type }}</td><td>{{ r.status }}</td></tr>
+{% else %}<tr><td colspan="4">No equipment</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

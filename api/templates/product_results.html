@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Product Results · Mock MES{% endblock %}
+{% block content %}
+<h1>제품실적 Product results</h1>
+<section class="panel">
+  <h2>제품실적 수동 입력 Manual product result</h2>
+  <form method="post" action="/product-results" class="row">
+    <label>Lot <input name="lot_id" list="lot_ids" required></label>
+    <datalist id="lot_ids">{% for l in lot_ids %}<option value="{{ l }}">{% endfor %}</datalist>
+    <label>Type
+      <select name="item_type"><option>FIN</option><option>SEMI</option></select></label>
+    <label>Good qty <input type="number" name="good_qty" min="0" required></label>
+    <label>Scrap <input type="number" name="scrap_qty" value="0" min="0"></label>
+    <button type="submit">Record</button>
+  </form>
+</section>
+<form method="get" action="/product-results" class="row filters">
+  <label>Product <input name="product_code" value="{{ filters.product_code }}"></label>
+  <label>Type <input name="item_type" value="{{ filters.item_type }}" list="types"></label>
+  <datalist id="types"><option>SEMI</option><option>FIN</option></datalist>
+  <label>Source <input name="source" value="{{ filters.source }}" list="sources"></label>
+  <datalist id="sources"><option>AUTO_FAB</option><option>AUTO_PACK</option><option>MANUAL</option></datalist>
+  <button type="submit">Filter</button>
+</form>
+<table><thead><tr><th>Date</th><th>Lot</th><th>Product</th><th>Type</th><th>Good</th><th>Scrap</th>
+  <th>Yield</th><th>Source</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.result_date }}</td><td>{{ r.lot_id or '' }}</td>
+  <td>{{ r.product_code }} {{ r.product_name or '' }}</td><td>{{ r.item_type }}</td>
+  <td>{{ r.good_qty }}</td><td>{{ r.scrap_qty }}</td><td>{{ r.yield_pct }}</td><td>{{ r.source }}</td></tr>
+{% else %}<tr><td colspan="8">No results</td></tr>{% endfor %}
+</tbody></table>
+{% endblock %}

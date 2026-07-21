@@ -1,10 +1,38 @@
 {% extends "base.html" %}
-{% block title %}WIP · Mock MES{% endblock %}
+{% block title %}재공 현황 · Mock MES{% endblock %}
+{% block breadcrumb %}생산 현황 / <strong>재공</strong>{% endblock %}
 {% block content %}
-<h1>재공 WIP (non-Done lots by step)</h1>
-<table><thead><tr><th>Seq</th><th>Step</th><th>Name</th><th>Stage</th><th>Lots</th><th>Wafers</th></tr></thead><tbody>
-{% for r in rows %}<tr><td>{{ r.seq }}</td><td>{{ r.step_code }}</td><td>{{ r.step_name }}</td>
-  <td>{{ r.stage }}</td><td>{{ r.lot_count }}</td><td>{{ r.wafer_qty }}</td></tr>
-{% else %}<tr><td colspan="6">No WIP</td></tr>{% endfor %}
-</tbody></table>
+<div data-page="wip">
+  <header class="page-header">
+    <div>
+      <p class="page-eyebrow">Production Status</p>
+      <h1>재공 현황</h1>
+      <p class="page-description">공정 단계별 재공(WIP) 로트 현황입니다.</p>
+    </div>
+  </header>
+  <section class="panel">
+    <div class="panel-header"><h2>공정 흐름</h2><span class="panel-meta">Process Flow · WIP lots by step</span></div>
+    <div class="process-flow">
+      {% set fab_steps = [("DIFF","확산"),("PHOTO","포토"),("ETCH","식각"),("IMPL","이온주입"),("CVD","증착"),("CMP","평탄화"),("METRO","계측"),("TEST","검사")] %}
+      {% for code, name in fab_steps %}
+        {% set ns = namespace(lots=0) %}
+        {% for r in rows %}{% if r.step_code == code %}{% set ns.lots = r.lot_count %}{% endif %}{% endfor %}
+        <div class="flow-node{% if ns.lots %} is-active{% endif %}">
+          <strong>{{ code }}</strong><small>{{ name }} · {{ ns.lots }} lots</small>
+        </div>
+        <span class="flow-arrow" aria-hidden="true">›</span>
+      {% endfor %}
+      <div class="flow-node"><strong>PKG</strong><small>패키징</small></div>
+    </div>
+  </section>
+  <section class="data-panel">
+    <div class="panel-header"><h2>단계별 재공 상세</h2><span class="panel-meta">WIP Detail</span></div>
+    <div class="table-wrap">
+      <table><thead><tr><th>순서</th><th>공정 코드</th><th>공정명</th><th>단계</th><th class="numeric">로트</th><th class="numeric">웨이퍼</th></tr></thead><tbody>
+      {% for r in rows %}<tr><td>{{ r.seq }}</td><td><strong>{{ r.step_code }}</strong></td><td>{{ r.step_name }}</td><td>{{ r.stage }}</td><td class="numeric">{{ r.lot_count }}</td><td class="numeric">{{ r.wafer_qty }}</td></tr>
+      {% else %}<tr><td colspan="6" class="empty-state">현재 재공이 없습니다.</td></tr>{% endfor %}
+      </tbody></table>
+    </div>
+  </section>
+</div>
 {% endblock %}

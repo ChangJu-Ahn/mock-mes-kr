@@ -204,3 +204,27 @@ class WebConsoleTests(unittest.TestCase):
             "@media (prefers-reduced-motion: reduce)",
         ):
             self.assertIn(token, css.text)
+
+    def test_dashboard_command_center_sections(self):
+        r = self.client.get("/")
+        for token in (
+            'data-page="dashboard"',
+            "Fab 운영 대시보드",
+            "생산 흐름",
+            "공정별 재공",
+            "낮은 자재 재고",
+            "최근 공정실적",
+            "최근 제품실적",
+            'class="kpi-grid"',
+            'class="process-flow"',
+        ):
+            self.assertIn(token, r.text)
+
+    def test_read_only_pages_use_shared_panels(self):
+        wip = self.client.get("/wip")
+        equipment = self.client.get("/equipment")
+        self.assertIn('data-page="wip"', wip.text)
+        self.assertIn('class="process-flow"', wip.text)
+        self.assertIn('data-page="equipment"', equipment.text)
+        self.assertIn("설비 상태", equipment.text)
+        self.assertIn('class="table-wrap"', equipment.text)

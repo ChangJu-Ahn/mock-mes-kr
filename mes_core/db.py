@@ -217,31 +217,76 @@ def add_production_result(
 
 def list_production_results(
     product: Optional[str] = None,
+    line: Optional[str] = None,
+    eqp_id: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    min_yield: Optional[float] = None,
+    sort: str = "date",
+    order: str = "desc",
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    """실적 조회: list production results, newest first, with optional filters."""
+    """실적 조회: list production results with rich filters and sorting."""
     clauses: list[str] = []
     params: list[Any] = []
     if product:
         clauses.append("product = ?")
         params.append(product)
+    if line:
+        clauses.append("line = ?")
+        params.append(line)
+    if eqp_id:
+        clauses.append("eqp_id = ?")
+        params.append(eqp_id)
     if date_from:
         clauses.append("result_date >= ?")
         params.append(date_from)
     if date_to:
         clauses.append("result_date <= ?")
         params.append(date_to)
+    if min_yield is not None:
+        clauses.append("yield_pct >= ?")
+        params.append(float(min_yield))
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sort_col = {"date": "result_date", "yield": "yield_pct", "good": "good_qty",
+                "scrap": "scrap_qty"}.get(sort, "result_date")
+    direction = "ASC" if str(order).lower() == "asc" else "DESC"
     params.append(int(limit))
     with get_conn() as conn:
         cur = conn.execute(
             f"""SELECT * FROM production_result
                 {where}
-                ORDER BY result_date DESC, id DESC
+                ORDER BY {sort_col} {direction}, id DESC
                 LIMIT ?""",
             params,
+        )
+        return _rows(cur)
+
+
+def get_production_result(result_id: int) -> Optional[dict[str, Any]]:
+    """실적 조회(단건): one production result by id, or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM production_result WHERE id = ?", (int(result_id),)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def production_summary(group_by: str = "product") -> list[dict[str, Any]]:
+    """실적 집계: totals + average yield grouped by product or line."""
+    column = {"product": "product", "line": "line"}.get(group_by)
+    if column is None:
+        raise ValueError(f"group_by must be 'product' or 'line', got {group_by!r}")
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"""SELECT {column} AS {group_by},
+                       COUNT(*)                       AS records,
+                       COALESCE(SUM(good_qty), 0)     AS good_total,
+                       COALESCE(SUM(scrap_qty), 0)    AS scrap_total,
+                       ROUND(AVG(yield_pct), 2)       AS avg_yield
+                FROM production_result
+                GROUP BY {column}
+                ORDER BY good_total DESC"""
         )
         return _rows(cur)
 
@@ -253,8 +298,11 @@ def list_production_results(
 def list_inventory(
     category: Optional[str] = None,
     location: Optional[str] = None,
+    q: Optional[str] = None,
+    min_qty: Optional[float] = None,
+    max_qty: Optional[float] = None,
 ) -> list[dict[str, Any]]:
-    """재고 조회: list inventory items with optional category/location filters."""
+    """재고 조회: list inventory items with category/location/search/qty filters."""
     clauses: list[str] = []
     params: list[Any] = []
     if category:
@@ -263,6 +311,16 @@ def list_inventory(
     if location:
         clauses.append("location = ?")
         params.append(location)
+    if q:
+        clauses.append("(LOWER(item_code) LIKE ? OR LOWER(item_name) LIKE ?)")
+        like = f"%{q.lower()}%"
+        params.extend([like, like])
+    if min_qty is not None:
+        clauses.append("qty >= ?")
+        params.append(float(min_qty))
+    if max_qty is not None:
+        clauses.append("qty <= ?")
+        params.append(float(max_qty))
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_conn() as conn:
         cur = conn.execute(
@@ -271,15 +329,40 @@ def list_inventory(
         return _rows(cur)
 
 
+def get_inventory_item(item_code: str) -> Optional[dict[str, Any]]:
+    """재고 조회(단건): one inventory item by code, or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM inventory WHERE item_code = ?", (item_code,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def inventory_facets() -> dict[str, list[str]]:
+    """Distinct categories and locations, so callers can discover filter values."""
+    with get_conn() as conn:
+        cats = [r[0] for r in conn.execute(
+            "SELECT DISTINCT category FROM inventory ORDER BY category").fetchall()]
+        locs = [r[0] for r in conn.execute(
+            "SELECT DISTINCT location FROM inventory ORDER BY location").fetchall()]
+    return {"categories": cats, "locations": locs}
+
+
 # --------------------------------------------------------------------------- #
 # 재공 / WIP (derived from lot.current_step)
 # --------------------------------------------------------------------------- #
 
-def get_wip() -> list[dict[str, Any]]:
+def get_wip(step_code: Optional[str] = None) -> list[dict[str, Any]]:
     """재공 조회: WIP grouped by current process step (running lots only)."""
+    clauses = ["1=1"]
+    params: list[Any] = []
+    if step_code:
+        clauses.append("ps.step_code = ?")
+        params.append(step_code)
+    where = " AND ".join(clauses)
     with get_conn() as conn:
         cur = conn.execute(
-            """SELECT ps.seq              AS seq,
+            f"""SELECT ps.seq              AS seq,
                       ps.step_code        AS step_code,
                       ps.step_name        AS step_name,
                       COUNT(l.lot_id)     AS lot_count,
@@ -288,8 +371,10 @@ def get_wip() -> list[dict[str, Any]]:
                LEFT JOIN lot l
                       ON l.current_step = ps.step_code
                      AND l.status = 'Running'
+               WHERE {where}
                GROUP BY ps.seq, ps.step_code, ps.step_name
-               ORDER BY ps.seq"""
+               ORDER BY ps.seq""",
+            params,
         )
         return _rows(cur)
 
@@ -298,23 +383,56 @@ def get_wip() -> list[dict[str, Any]]:
 # 공정 (process_step route + process_history)
 # --------------------------------------------------------------------------- #
 
-def get_process_route() -> list[dict[str, Any]]:
-    """공정 조회 (route): the ordered process route / step master."""
+def get_process_route(
+    step_code: Optional[str] = None,
+    eqp_type: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """공정 조회 (route): the ordered process route, optionally filtered."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if step_code:
+        clauses.append("step_code = ?")
+        params.append(step_code)
+    if eqp_type:
+        clauses.append("eqp_type = ?")
+        params.append(eqp_type)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_conn() as conn:
-        cur = conn.execute("SELECT * FROM process_step ORDER BY seq")
+        cur = conn.execute(f"SELECT * FROM process_step {where} ORDER BY seq", params)
         return _rows(cur)
 
 
 def get_process_history(
     lot_id: Optional[str] = None,
+    step_code: Optional[str] = None,
+    result: Optional[str] = None,
+    operator: Optional[str] = None,
+    defect_code: Optional[str] = None,
+    has_scrap: Optional[bool] = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """공정 조회 (history): process move history, optionally for one lot."""
+    """공정 조회 (history): process move history with optional filters."""
     clauses: list[str] = []
     params: list[Any] = []
     if lot_id:
         clauses.append("h.lot_id = ?")
         params.append(lot_id)
+    if step_code:
+        clauses.append("h.step_code = ?")
+        params.append(step_code)
+    if result:
+        clauses.append("h.result = ?")
+        params.append(result)
+    if operator:
+        clauses.append("h.operator = ?")
+        params.append(operator)
+    if defect_code:
+        clauses.append("h.defect_code = ?")
+        params.append(defect_code)
+    if has_scrap is True:
+        clauses.append("COALESCE(h.scrap_qty, 0) > 0")
+    elif has_scrap is False:
+        clauses.append("COALESCE(h.scrap_qty, 0) = 0")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
     with get_conn() as conn:
@@ -470,9 +588,11 @@ def list_lots(
     status: Optional[str] = None,
     product: Optional[str] = None,
     current_step: Optional[str] = None,
+    priority: Optional[str] = None,
+    tech_node: Optional[str] = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """로트 조회 (list): lots with optional status/product/step filters."""
+    """로트 조회 (list): lots with optional status/product/step/priority filters."""
     clauses: list[str] = []
     params: list[Any] = []
     if status:
@@ -484,6 +604,12 @@ def list_lots(
     if current_step:
         clauses.append("l.current_step = ?")
         params.append(current_step)
+    if priority:
+        clauses.append("l.priority = ?")
+        params.append(priority)
+    if tech_node:
+        clauses.append("l.tech_node = ?")
+        params.append(tech_node)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
     with get_conn() as conn:

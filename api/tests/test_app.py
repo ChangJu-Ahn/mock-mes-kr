@@ -82,5 +82,44 @@ class MockMesApiTests(unittest.TestCase):
         self.assertIn("TEST", detail.text)
 
 
+    def test_enriched_rest_query_surface(self):
+        client = self.client
+
+        products = client.get("/api/products")
+        self.assertEqual(products.status_code, 200)
+        self.assertIn("LX9 AP", products.json())
+
+        summary = client.get("/api/production-results/summary", params={"group_by": "product"})
+        self.assertEqual(summary.status_code, 200)
+        self.assertTrue(all("group" in row and "avg_yield" in row for row in summary.json()))
+        self.assertEqual(client.get("/api/production-results/summary", params={"group_by": "bogus"}).status_code, 422)
+
+        filtered = client.get("/api/production-results", params={"min_yield": 98, "sort": "yield", "order": "desc"})
+        self.assertEqual(filtered.status_code, 200)
+        ylist = [row["yield_pct"] for row in filtered.json()]
+        self.assertTrue(all(y >= 98 for y in ylist))
+        self.assertEqual(ylist, sorted(ylist, reverse=True))
+
+        one = client.get("/api/production-results", params={"limit": 1}).json()[0]
+        self.assertEqual(client.get(f"/api/production-results/{one['id']}").status_code, 200)
+        self.assertEqual(client.get("/api/production-results/999999").status_code, 404)
+
+        inv = client.get("/api/inventory", params={"q": "wafer", "min_qty": 1})
+        self.assertEqual(inv.status_code, 200)
+        self.assertTrue(all("wafer" in row["item_name"].lower() or "wafer" in row["item_code"].lower() for row in inv.json()))
+
+        facets = client.get("/api/inventory/facets").json()
+        self.assertIn("categories", facets)
+        self.assertIn("locations", facets)
+
+        item_code = client.get("/api/inventory", params={"limit": 1}).json()[0]["item_code"]
+        self.assertEqual(client.get(f"/api/inventory/{item_code}").status_code, 200)
+        self.assertEqual(client.get("/api/inventory/NO-SUCH-ITEM").status_code, 404)
+
+        wip = client.get("/api/wip", params={"step_code": "DIFF"})
+        self.assertEqual(wip.status_code, 200)
+        self.assertTrue(all(row["step_code"] == "DIFF" for row in wip.json()))
+
+
 if __name__ == "__main__":
     unittest.main()

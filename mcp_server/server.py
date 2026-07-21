@@ -16,11 +16,21 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool(description="공정 입력: register a lot movement at a process step and advance the lot current_step.")
+@mcp.tool(
+    description=(
+        "공정 입력: register a lot movement at a process step. Records wafer "
+        "quantities (in_qty defaults to the lot's current wafer_qty; out = in - "
+        "scrap), advances the lot's current_step, and closes the lot (+ creates a "
+        "production_result) when the final step passes."
+    )
+)
 def register_process_move(
     lot_id: str,
     step_code: str,
     eqp_id: str | None = None,
+    in_qty: int | None = None,
+    scrap_qty: int = 0,
+    defect_code: str | None = None,
     operator: str | None = None,
     result: str = "Pass",
 ) -> dict[str, Any]:
@@ -29,6 +39,9 @@ def register_process_move(
             lot_id=lot_id,
             step_code=step_code,
             eqp_id=eqp_id,
+            in_qty=in_qty,
+            scrap_qty=scrap_qty,
+            defect_code=defect_code,
             operator=operator,
             result=result,
         )
@@ -36,17 +49,42 @@ def register_process_move(
         return {"error": str(exc)}
 
 
-@mcp.tool(description="공정 조회(route): return the ordered MES process route.")
-def get_process_route() -> list[dict[str, Any]]:
-    return db.get_process_route()
+@mcp.tool(description="공정 조회(route): return the process route, optionally filtered by step_code or eqp_type.")
+def get_process_route(
+    step_code: str | None = None,
+    eqp_type: str | None = None,
+) -> list[dict[str, Any]]:
+    return db.get_process_route(step_code=step_code, eqp_type=eqp_type)
 
 
-@mcp.tool(description="공정 조회(history): return process history rows, optionally filtered by lot_id.")
-def get_process_history(lot_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-    return db.get_process_history(lot_id=lot_id, limit=limit)
+@mcp.tool(
+    description=(
+        "공정 조회(history): return process history rows. Filter by lot_id, "
+        "step_code, result, operator, defect_code, or has_scrap (True = only "
+        "moves with scrap)."
+    )
+)
+def get_process_history(
+    lot_id: str | None = None,
+    step_code: str | None = None,
+    result: str | None = None,
+    operator: str | None = None,
+    defect_code: str | None = None,
+    has_scrap: bool | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    return db.get_process_history(
+        lot_id=lot_id,
+        step_code=step_code,
+        result=result,
+        operator=operator,
+        defect_code=defect_code,
+        has_scrap=has_scrap,
+        limit=limit,
+    )
 
 
-@mcp.tool(description="로트 조회(one): return a lot with current step details and process history.")
+@mcp.tool(description="로트 조회(one): return a lot with current step, wafer qty, cumulative_yield, and process history.")
 def get_lot(lot_id: str) -> dict[str, Any]:
     lot = db.get_lot(lot_id)
     if lot is None:
@@ -54,14 +92,23 @@ def get_lot(lot_id: str) -> dict[str, Any]:
     return lot
 
 
-@mcp.tool(description="로트 조회(list): return matching lots filtered by status, product, or current_step.")
+@mcp.tool(description="로트 조회(list): return matching lots filtered by status, product, current_step, priority, or tech_node.")
 def list_lots(
     status: str | None = None,
     product: str | None = None,
     current_step: str | None = None,
+    priority: str | None = None,
+    tech_node: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    return db.list_lots(status=status, product=product, current_step=current_step, limit=limit)
+    return db.list_lots(
+        status=status,
+        product=product,
+        current_step=current_step,
+        priority=priority,
+        tech_node=tech_node,
+        limit=limit,
+    )
 
 
 def main() -> None:

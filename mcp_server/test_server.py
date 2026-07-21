@@ -27,7 +27,7 @@ class MCPPToolsTest(unittest.TestCase):
         lot_id = db.list_lot_ids()[0]
         before = get_lot(lot_id)
 
-        result = register_process_move(lot_id, "ETCH", "EQP-ETCH01", "mcp-test", "Pass")
+        result = register_process_move(lot_id, "ETCH", eqp_id="EQP-ETCH01", operator="mcp-test", result="Pass")
 
         after = get_lot(lot_id)
         history = get_process_history(lot_id=lot_id, limit=10)
@@ -59,6 +59,39 @@ class MCPPToolsTest(unittest.TestCase):
         self.assertGreater(len(payloads[0]), 0)
         self.assertLessEqual(len(payloads[1]), 3)
         self.assertIn("not_found", payloads[3])
+
+    def test_process_move_with_scrap_reduces_wafers(self):
+        from mes_core import db
+        from mcp_server.server import get_lot, register_process_move
+
+        lot_id = db.list_lots(status="Running", limit=1)[0]["lot_id"]
+        before = get_lot(lot_id)["wafer_qty"]
+
+        res = register_process_move(
+            lot_id, "CMP", eqp_id="EQP-CMP01", in_qty=before,
+            scrap_qty=2, defect_code="Scratch", operator="mcp-scrap",
+        )
+
+        self.assertNotIn("error", res)
+        self.assertEqual(res["in_qty"], before)
+        self.assertEqual(res["scrap_qty"], 2)
+        self.assertEqual(res["out_qty"], before - 2)
+        self.assertEqual(res["defect_code"], "Scratch")
+        self.assertEqual(get_lot(lot_id)["wafer_qty"], before - 2)
+
+    def test_history_has_scrap_filter(self):
+        from mcp_server.server import get_process_history
+
+        rows = get_process_history(has_scrap=True, limit=1000)
+        self.assertTrue(rows)
+        self.assertTrue(all((row["scrap_qty"] or 0) > 0 for row in rows))
+
+    def test_list_lots_priority_filter(self):
+        from mcp_server.server import list_lots
+
+        priority = list_lots(limit=1000)[0]["priority"]
+        rows = list_lots(priority=priority, limit=1000)
+        self.assertTrue(all(row["priority"] == priority for row in rows))
 
 
 if __name__ == "__main__":

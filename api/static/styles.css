@@ -196,3 +196,6 @@ pre { overflow-x: auto; padding: 1rem; border-radius: var(--radius-sm); backgrou
 .muted { color: var(--muted); }
 .text-danger { color: var(--danger); }
 .summary-card small { display: inline-flex; margin-top: .45rem; }
+.badge-hot { background: var(--danger-soft); color: var(--danger); }
+.badge-normal { background: var(--primary-soft); color: var(--primary); }
+.badge-low { background: #f1f5f9; color: #475569; }

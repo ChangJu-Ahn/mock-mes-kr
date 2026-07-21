@@ -1,36 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Lots · Mock MES{% endblock %}
+{% block title %}로트 · Mock MES{% endblock %}
+{% block breadcrumb %}생산관리 / <strong>로트</strong>{% endblock %}
 {% block content %}
-<h1>로트 Lots</h1>
-<section class="panel">
-  <h2>로트 투입 Start lot</h2>
-  <form method="post" action="/lots/start" class="row">
-    <label>Product
-      <select name="product_code" required>
-        {% for p in products %}<option value="{{ p.product_code }}">{{ p.product_code }} — {{ p.product_name }}</option>{% endfor %}
-      </select></label>
-    <label>Start qty <input type="number" name="start_qty" value="25" min="1" required></label>
-    <label>Priority
-      <select name="priority"><option>Normal</option><option>Hot</option><option>Low</option></select></label>
-    <button type="submit">Start</button>
+<div data-page="lots">
+  <header class="page-header"><div><p class="page-eyebrow">Production</p><h1>로트</h1><p class="page-description">제품별 웨이퍼 로트를 투입하고 현재 공정과 상태를 조회합니다. · Lots</p></div><div class="page-actions"><button type="button" data-open-panel="start-lot">+ 로트 투입</button></div></header>
+  <details class="action-panel" id="start-lot">
+    <summary><span><strong>새 로트 투입</strong><small>Start a new wafer lot</small></span></summary>
+    <div class="action-body"><form method="post" action="/lots/start">
+      <div class="form-grid">
+        <label class="form-field">제품 <span class="required">*</span><select name="product_code" required>{% for p in products %}<option value="{{ p.product_code }}">{{ p.product_code }} · {{ p.product_name }}</option>{% endfor %}</select></label>
+        <label class="form-field">투입 수량 <span class="required">*</span><input type="number" name="start_qty" value="25" min="1" required></label>
+        <label class="form-field">우선순위<select name="priority"><option>Normal</option><option>Hot</option><option>Low</option></select></label>
+      </div>
+      <div class="form-footer"><p class="form-note">첫 FAB 공정에서 Running 상태로 시작합니다.</p><button type="submit">로트 투입</button></div>
+    </form></div>
+  </details>
+  <form method="get" action="/lots" class="filter-bar">
+    <label class="form-field">상태<input name="status_filter" value="{{ filters.status_filter }}" list="statuses"></label><datalist id="statuses"><option>Running</option><option>Hold</option><option>Done</option></datalist>
+    <label class="form-field">제품<input name="product_code" value="{{ filters.product_code }}"></label>
+    <label class="form-field">현재 공정<input name="current_step" value="{{ filters.current_step }}"></label>
+    <button type="submit">필터 적용</button>
   </form>
-</section>
-
-<form method="get" action="/lots" class="row filters">
-  <label>Status <input name="status_filter" value="{{ filters.status_filter }}" list="statuses"></label>
-  <datalist id="statuses"><option>Running</option><option>Hold</option><option>Done</option></datalist>
-  <label>Product <input name="product_code" value="{{ filters.product_code }}"></label>
-  <label>Step <input name="current_step" value="{{ filters.current_step }}"></label>
-  <button type="submit">Filter</button>
-</form>
-
-<table><thead><tr><th>Lot</th><th>Product</th><th>Tech</th><th>Start</th><th>Wafers</th>
-  <th>Priority</th><th>Step</th><th>Status</th></tr></thead><tbody>
-{% for r in rows %}<tr>
-  <td><a href="/lots/{{ r.lot_id }}">{{ r.lot_id }}</a></td>
-  <td>{{ r.product_code }} {{ r.product_name or '' }}</td><td>{{ r.tech_node }}</td>
-  <td>{{ r.start_qty }}</td><td>{{ r.wafer_qty }}</td><td>{{ r.priority }}</td>
-  <td>{{ r.current_step }}</td><td>{{ r.status }}</td></tr>
-{% else %}<tr><td colspan="8">No lots</td></tr>{% endfor %}
-</tbody></table>
+  <section class="data-panel"><div class="panel-header"><h2>로트 목록</h2><span class="panel-meta">{{ rows|length }} lots</span></div><div class="table-wrap"><table><thead><tr><th>로트</th><th>제품</th><th>Tech</th><th class="numeric">투입</th><th class="numeric">현재 수량</th><th>우선순위</th><th>현재 공정</th><th>상태</th></tr></thead><tbody>
+  {% for r in rows %}<tr><td><a class="mono" href="/lots/{{ r.lot_id }}">{{ r.lot_id }}</a></td><td><strong>{{ r.product_code }}</strong> <span class="muted">{{ r.product_name or "" }}</span></td><td>{{ r.tech_node }}</td><td class="numeric">{{ r.start_qty }}</td><td class="numeric">{{ r.wafer_qty }}</td><td><span class="badge badge-{{ r.priority|lower }}">{{ r.priority }}</span></td><td>{{ r.current_step }}</td><td><span class="badge badge-{{ r.status|lower }}">{{ r.status }}</span></td></tr>
+  {% else %}<tr><td colspan="8" class="empty-state">조건에 맞는 로트가 없습니다.</td></tr>{% endfor %}
+  </tbody></table></div></section>
+</div>
 {% endblock %}

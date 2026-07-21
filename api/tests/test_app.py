@@ -228,3 +228,43 @@ class WebConsoleTests(unittest.TestCase):
         self.assertIn('data-page="equipment"', equipment.text)
         self.assertIn("설비 상태", equipment.text)
         self.assertIn('class="table-wrap"', equipment.text)
+
+    def test_production_pages_preserve_form_contracts(self):
+        lots = self.client.get("/lots").text
+        for token in (
+            'data-page="lots"',
+            'class="action-panel"',
+            'action="/lots/start"',
+            'method="post"',
+            'name="product_code"',
+            'name="start_qty"',
+            'name="priority"',
+            'action="/lots"',
+            'name="status_filter"',
+            'name="current_step"',
+        ):
+            self.assertIn(token, lots)
+
+        process = self.client.get("/process").text
+        for token in (
+            'data-page="process"',
+            'action="/process/results"',
+            'name="lot_id"',
+            'name="step_code"',
+            'name="eqp_id"',
+            'name="in_qty"',
+            'name="scrap_qty"',
+            'name="defect_code"',
+            'name="operator"',
+            'name="result"',
+        ):
+            self.assertIn(token, process)
+        self.assertIn('class="process-flow"', process)
+
+    def test_lot_detail_uses_summary_and_history_panels(self):
+        lot_id = self.db.list_lot_ids()[0]
+        html = self.client.get(f"/lots/{lot_id}").text
+        self.assertIn('data-page="lot-detail"', html)
+        self.assertIn('class="summary-grid"', html)
+        self.assertIn("누적 수율", html)
+        self.assertIn("공정 이력", html)

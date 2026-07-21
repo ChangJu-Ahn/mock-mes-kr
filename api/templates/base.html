@@ -91,6 +91,15 @@
     if (event.key === "Escape") setOpen(false);
   });
 })();
+document.querySelectorAll("[data-open-panel]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const panel = document.getElementById(button.dataset.openPanel);
+    if (!panel) return;
+    panel.open = true;
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    panel.querySelector("input, select")?.focus({ preventScroll: true });
+  });
+});
 </script>
 </body>
 </html>

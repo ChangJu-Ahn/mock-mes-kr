@@ -447,7 +447,8 @@ class SeedTests(unittest.TestCase):
         self.assertEqual(c["process_step"], 9)      # 8 FAB + PKG
         self.assertEqual(c["equipment"], 9)
         self.assertEqual(c["material"], 12)
-        self.assertGreaterEqual(c["bom"], 24)
+        self.assertEqual(c["bom"], 48)
+        self.assertEqual(c["process_result"], 91)
         self.assertEqual(c["lot"], 16)
 
     def test_done_lots_produced_semi(self):
@@ -456,17 +457,16 @@ class SeedTests(unittest.TestCase):
         auto_fab = self.db.list_product_results(source="AUTO_FAB")
         self.assertEqual(len(auto_fab), 6)
         semi = self.db.list_product_inventory(item_type="SEMI")
-        self.assertTrue(sum(r["qty"] for r in semi) > 0)
+        self.assertEqual(sum(r["qty"] for r in semi), 69)
 
     def test_packaging_and_manual_results_present(self):
         self.assertEqual(len(self.db.list_product_results(source="AUTO_PACK")), 3)
         self.assertEqual(len(self.db.list_product_results(source="MANUAL")), 1)
         fin = self.db.list_product_inventory(item_type="FIN")
-        self.assertTrue(sum(r["qty"] for r in fin) > 0)
+        self.assertEqual(sum(r["qty"] for r in fin), 277)
 
     def test_wip_only_non_done(self):
         wip = self.db.get_wip()
-        self.assertTrue(all(w["lot_count"] > 0 for w in wip))
         self.assertEqual(sum(w["lot_count"] for w in wip), 10)  # 2 Hold + 8 Running
 
 

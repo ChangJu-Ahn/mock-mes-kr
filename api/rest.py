@@ -1,12 +1,13 @@
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from api.auth import require_api_key
 from mes_core import db
 
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key)])
 
 
 class ProductionResultCreate(BaseModel):

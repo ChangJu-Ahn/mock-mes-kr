@@ -93,6 +93,46 @@ class MCPPToolsTest(unittest.TestCase):
         rows = list_lots(priority=priority, limit=1000)
         self.assertTrue(all(row["priority"] == priority for row in rows))
 
+    def test_asgi_guard_enforces_api_key(self):
+        import asyncio
+
+        from mcp_server.server import _ApiKeyGuard
+
+        calls = []
+
+        async def inner(scope, receive, send):
+            calls.append("inner")
+
+        guard = _ApiKeyGuard(inner)
+
+        async def run(headers):
+            sent = []
+
+            async def send(msg):
+                sent.append(msg)
+
+            async def receive():
+                return {}
+
+            await guard({"type": "http", "headers": headers}, receive, send)
+            return sent
+
+        # no header -> 401, inner never reached
+        sent = asyncio.run(run([]))
+        self.assertEqual(sent[0]["status"], 401)
+        self.assertNotIn("inner", calls)
+
+        # wrong key -> 401
+        calls.clear()
+        sent = asyncio.run(run([(b"x-api-key", b"nope")]))
+        self.assertEqual(sent[0]["status"], 401)
+        self.assertNotIn("inner", calls)
+
+        # correct key -> passes through to inner app
+        calls.clear()
+        asyncio.run(run([(b"x-api-key", b"changjuahn")]))
+        self.assertIn("inner", calls)
+
 
 if __name__ == "__main__":
     unittest.main()

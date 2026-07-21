@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -112,10 +113,52 @@ def list_lots(
 
 
 def main() -> None:
-    mcp.run(transport="streamable-http")
+    import uvicorn
+
+    uvicorn.run(build_asgi_app(), host="0.0.0.0", port=8001)
+
+
+DEFAULT_API_KEY = "changjuahn"
+
+
+class _ApiKeyGuard:
+    """Pure-ASGI header gate: only requests carrying a valid X-API-Key pass.
+
+    Kept as pure ASGI (not Starlette BaseHTTPMiddleware) so it never buffers the
+    streamable-HTTP / SSE responses that the MCP transport relies on. The
+    accepted key is read from MES_API_KEY at request time (default 'changjuahn').
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers") or [])
+            provided = headers.get(b"x-api-key")
+            expected = os.environ.get("MES_API_KEY", DEFAULT_API_KEY).encode()
+            if provided is None or provided != expected:
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": b'{"error":"Invalid or missing API key. Send header X-API-Key."}',
+                })
+                return
+        await self.app(scope, receive, send)
+
+
+def build_asgi_app() -> _ApiKeyGuard:
+    """The streamable-HTTP MCP app wrapped in the API-key guard."""
+    return _ApiKeyGuard(mcp.streamable_http_app())
 
 
 __all__ = [
+    "DEFAULT_API_KEY",
+    "build_asgi_app",
     "get_lot",
     "get_process_history",
     "get_process_route",

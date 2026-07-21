@@ -25,6 +25,9 @@ param proxyImage string = 'ghcr.io/changju-ahn/mock-mes-proxy:latest'
 @description('Revision suffix. Defaults to a deploy-time timestamp so each redeploy rolls a fresh revision that re-pulls the (mutable :latest) images.')
 param revisionSuffix string = 'r${utcNow('yyMMddHHmmss')}'
 
+@description('Demo API key required in the X-API-Key header on all REST /api/* and MCP /mcp calls. Web console + /api/docs stay open.')
+param apiKey string = 'changjuahn'
+
 var dbPath = '/data/mes.db'
 var dbEnv = [
   {
@@ -32,6 +35,13 @@ var dbEnv = [
     value: dbPath
   }
 ]
+// api + mcp additionally get the demo API key; the seed init container does not need it.
+var appEnv = concat(dbEnv, [
+  {
+    name: 'MES_API_KEY'
+    value: apiKey
+  }
+])
 var containerResources = {
   cpu: json('0.25')
   memory: '0.5Gi'
@@ -116,7 +126,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             '8000'
           ]
           resources: containerResources
-          env: dbEnv
+          env: appEnv
           volumeMounts: volumeMounts
         }
         {
@@ -128,7 +138,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             'mcp_server'
           ]
           resources: containerResources
-          env: dbEnv
+          env: appEnv
           volumeMounts: volumeMounts
         }
         {

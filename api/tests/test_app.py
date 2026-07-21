@@ -18,7 +18,7 @@ class MockMesApiTests(unittest.TestCase):
         from api.main import app
 
         cls.db = db
-        cls.client = TestClient(app)
+        cls.client = TestClient(app, headers={"X-API-Key": "changjuahn"})
 
     @classmethod
     def tearDownClass(cls):
@@ -150,6 +150,33 @@ class MockMesApiTests(unittest.TestCase):
         detail = self.client.get(f"/lots/{lot_id}")
         self.assertIn("Cumulative yield", detail.text)
         self.assertIn("Particle", detail.text)
+
+
+    def test_api_key_gate(self):
+        from api.main import app
+
+        nokey = TestClient(app)  # no default header
+
+        # data endpoints require the key
+        self.assertEqual(nokey.get("/api/wip").status_code, 401)
+        self.assertEqual(nokey.get("/api/production-results").status_code, 401)
+        self.assertEqual(nokey.get("/api/health").status_code, 401)
+        self.assertEqual(
+            nokey.post("/api/production-results", json={"product": "X", "good_qty": 1}).status_code,
+            401,
+        )
+        # wrong key -> 401
+        self.assertEqual(nokey.get("/api/wip", headers={"X-API-Key": "nope"}).status_code, 401)
+        # correct key -> 200
+        self.assertEqual(nokey.get("/api/wip", headers={"X-API-Key": "changjuahn"}).status_code, 200)
+        # web console + docs stay open (human-facing, no key)
+        self.assertEqual(nokey.get("/").status_code, 200)
+        self.assertEqual(nokey.get("/process").status_code, 200)
+        self.assertEqual(nokey.get("/api/docs").status_code, 200)
+        self.assertEqual(nokey.get("/api/openapi.json").status_code, 200)
+        # the security scheme is advertised in the OpenAPI schema
+        schemes = nokey.get("/api/openapi.json").json()["components"]["securitySchemes"]
+        self.assertIn("APIKeyHeader", schemes)
 
 
 if __name__ == "__main__":

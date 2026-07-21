@@ -11,7 +11,9 @@ One shared SQLite database is exposed through **three surfaces**:
 | **REST API** | Agent | `/api` (docs at `/api/docs`) | 실적입력 · 실적조회 · 재고조회 · 재공조회 |
 | **MCP server** | Agent | `/mcp` (streamable HTTP) | 공정입력 · 공정조회 · 로트조회 |
 
-> **MVP only.** No authentication, no security, no scale/HA. The database is
+> **MVP / demo only.** A single shared **demo API key** (`changjuahn`) gates the
+> agent surfaces (REST + MCP); there is otherwise no real security, no scale/HA.
+> The database is
 > **ephemeral** and **re-seeded on every cold start**, so every demo run gets a
 > fresh, identical fab snapshot. Optimised for simplicity and the cheapest
 > possible Azure footprint.
@@ -136,6 +138,22 @@ pieces of equipment.
 
 ## Connecting an agent
 
+### Authentication (demo API key)
+
+Both agent surfaces require a header key on **every** call:
+
+```
+X-API-Key: changjuahn
+```
+
+- Applies to all REST `/api/*` endpoints and the MCP `/mcp` endpoint.
+- Missing/wrong key → `401 Unauthorized`.
+- The **web console** (`/`) and the **interactive docs** (`/api/docs`,
+  `/api/openapi.json`) stay open so humans can browse without a key — in Swagger
+  UI click **Authorize** and paste `changjuahn` to try the endpoints.
+- The key is configurable via the `MES_API_KEY` env var (defaults to
+  `changjuahn`). It's a demo shared secret, not real security.
+
 ### REST API (Production & Inventory)
 
 Interactive docs and schema: `https://<fqdn>/api/docs` · `https://<fqdn>/api/openapi.json`
@@ -157,23 +175,25 @@ lookups and aggregation:
 
 ```bash
 # 실적 조회 — top-yielding V7 NAND results
-curl "https://<fqdn>/api/production-results?product=V7%20NAND&min_yield=95&sort=yield&order=desc&limit=5"
+curl -H "X-API-Key: changjuahn" \
+  "https://<fqdn>/api/production-results?product=V7%20NAND&min_yield=95&sort=yield&order=desc&limit=5"
 
 # 실적 입력 — register a result (yield auto-computed if omitted)
 curl -X POST "https://<fqdn>/api/production-results" \
+  -H "X-API-Key: changjuahn" \
   -H 'content-type: application/json' \
   -d '{"product":"LX9 AP","good_qty":480,"scrap_qty":12,"line":"FAB1-L1"}'
 
 # 실적 aggregation by product
-curl "https://<fqdn>/api/production-results/summary?group_by=product"
+curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/production-results/summary?group_by=product"
 
 # 재고 조회 — search + qty filter; and facets / single item
-curl "https://<fqdn>/api/inventory?q=wafer&min_qty=1000"
-curl "https://<fqdn>/api/inventory/facets"
-curl "https://<fqdn>/api/inventory/RAW-WAFER-300"
+curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/inventory?q=wafer&min_qty=1000"
+curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/inventory/facets"
+curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/inventory/RAW-WAFER-300"
 
 # 재공 조회 — one step
-curl "https://<fqdn>/api/wip?step_code=ETCH"
+curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/wip?step_code=ETCH"
 ```
 
 ### MCP server (Process & Lot)
@@ -196,7 +216,8 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 async def main():
-    async with streamablehttp_client("https://<fqdn>/mcp") as (r, w, _):
+    headers = {"X-API-Key": "changjuahn"}
+    async with streamablehttp_client("https://<fqdn>/mcp", headers=headers) as (r, w, _):
         async with ClientSession(r, w) as s:
             await s.initialize()
             print([t.name for t in (await s.list_tools()).tools])
@@ -213,7 +234,7 @@ asyncio.run(main())
 ```
 
 Popular MCP clients can point straight at `https://<fqdn>/mcp` (transport: HTTP /
-streamable HTTP). No auth.
+streamable HTTP) — configure a header `X-API-Key: changjuahn`.
 
 ---
 
@@ -308,5 +329,7 @@ az group delete -n rg-mock-mes-kr --yes --no-wait
   so horizontal scale is intentionally capped at 1 (`maxReplicas=1`).
 - Ephemeral data is a feature, not a bug — every cold start re-seeds, which keeps
   demos reproducible. Nothing is persisted between replica lifetimes.
-- No auth/security is intentional for this demo connection point. Do not put real
-  or sensitive data in it.
+- A single shared demo key (`X-API-Key: changjuahn`) gates the REST + MCP agent
+  surfaces so calls look like any other keyed API/MCP; it is **not** real security.
+  The human web console and `/api/docs` stay open. Do not put real or sensitive
+  data in it.

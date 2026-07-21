@@ -155,3 +155,44 @@ class WebConsoleTests(unittest.TestCase):
         r = self.client.get("/guide")
         self.assertEqual(r.status_code, 200)
         self.assertIn("공정", r.text)
+
+    def test_modern_shell_contract(self):
+        r = self.client.get("/process")
+        self.assertEqual(r.status_code, 200)
+        for token in (
+            'class="app-shell"',
+            'id="primary-navigation"',
+            'aria-label="주요 메뉴"',
+            'data-nav-toggle',
+            'id="main-content"',
+            'href="/guide"',
+            'href="/api/docs"',
+        ):
+            self.assertIn(token, r.text)
+        self.assertRegex(
+            r.text,
+            r'href="/process"[^>]*aria-current="page"|'
+            r'aria-current="page"[^>]*href="/process"',
+        )
+
+    def test_feedback_banners_are_accessible(self):
+        r = self.client.get("/lots", params={"message": "Saved", "error": "Problem"})
+        self.assertIn('role="status"', r.text)
+        self.assertIn('role="alert"', r.text)
+        self.assertIn("Saved", r.text)
+        self.assertIn("Problem", r.text)
+
+    def test_design_system_stylesheet(self):
+        css = self.client.get("/static/styles.css")
+        self.assertEqual(css.status_code, 200)
+        for token in (
+            "--sidebar-width:",
+            ".app-shell",
+            ".action-panel",
+            ".form-grid",
+            ".table-wrap",
+            ".badge",
+            "@media (max-width: 960px)",
+            "@media (prefers-reduced-motion: reduce)",
+        ):
+            self.assertIn(token, css.text)

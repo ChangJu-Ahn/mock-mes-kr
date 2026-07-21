@@ -3,31 +3,94 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
   <title>{% block title %}Mock MES{% endblock %}</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="/">Mock MES</a>
-    <nav>
-      <a href="/">Dashboard</a>
-      <a href="/lots">로트 Lots</a>
-      <a href="/process">공정실적 Process</a>
-      <a href="/product-inventory">제품재고 Product</a>
-      <a href="/product-results">제품실적 Results</a>
-      <a href="/materials">자재 Material</a>
-      <a href="/bom">BOM</a>
-      <a href="/wip">재공 WIP</a>
-      <a href="/equipment">설비 Equip</a>
-      <a href="/guide">사용법 Guide</a>
-      <a href="/api/docs">API Docs</a>
+{% set current_path = request.url.path %}
+{% macro nav_item(href, label, english, icon, prefix="") -%}
+  {% set active = current_path == href or (prefix and current_path.startswith(prefix)) %}
+  <a class="nav-link{% if active %} is-active{% endif %}" href="{{ href }}"
+     {% if active %}aria-current="page"{% endif %}>
+    <span class="nav-icon" aria-hidden="true">{{ icon }}</span>
+    <span><strong>{{ label }}</strong><small>{{ english }}</small></span>
+  </a>
+{%- endmacro %}
+<a class="skip-link" href="#main-content">본문으로 건너뛰기</a>
+<div class="app-shell">
+  <aside class="sidebar" id="primary-navigation" aria-label="주요 메뉴">
+    <a class="brand" href="/">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <span><strong>Mock MES</strong><small>SEMICONDUCTOR FAB</small></span>
+    </a>
+    <nav class="sidebar-nav">
+      <p class="nav-group">Overview</p>
+      {{ nav_item("/", "대시보드", "Dashboard", "⌂") }}
+      <p class="nav-group">Production</p>
+      {{ nav_item("/lots", "로트", "Lots", "▦", "/lots") }}
+      {{ nav_item("/process", "공정실적", "Process Results", "↗") }}
+      {{ nav_item("/wip", "재공", "WIP", "◫") }}
+      <p class="nav-group">Inventory</p>
+      {{ nav_item("/product-inventory", "제품재고", "Product Inventory", "◇") }}
+      {{ nav_item("/product-results", "제품실적", "Product Results", "✓") }}
+      {{ nav_item("/materials", "자재", "Materials", "◈") }}
+      <p class="nav-group">Master &amp; Help</p>
+      {{ nav_item("/bom", "BOM", "Bill of Materials", "⌁") }}
+      {{ nav_item("/equipment", "설비", "Equipment", "⚙") }}
+      {{ nav_item("/guide", "사용법", "Guide", "?") }}
+      {{ nav_item("/api/docs", "API 문서", "OpenAPI Docs", "{ }") }}
     </nav>
-  </header>
-  <main class="container">
-    {% if message %}<div class="alert success">{{ message }}</div>{% endif %}
-    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
-    {% block content %}{% endblock %}
-  </main>
+    <div class="system-card">
+      <div><span><i class="health-dot"></i>System healthy</span><b>LIVE</b></div>
+      <div><span>Shared DB</span><span>SQLite WAL</span></div>
+    </div>
+  </aside>
+  <button class="nav-backdrop" type="button" data-nav-close
+          aria-label="메뉴 닫기"></button>
+  <div class="app-main">
+    <header class="utility-bar">
+      <button class="nav-toggle" type="button" data-nav-toggle
+              aria-controls="primary-navigation" aria-expanded="false">
+        <span aria-hidden="true">☰</span><span>메뉴</span>
+      </button>
+      <div class="breadcrumbs">{% block breadcrumb %}운영 현황{% endblock %}</div>
+      <div class="utility-actions">
+        <a href="/guide">사용법</a>
+        <span class="health-pill"><i class="health-dot"></i>정상 운영</span>
+      </div>
+    </header>
+    <main class="page-content" id="main-content">
+      {% if message %}
+        <div class="alert alert-success" role="status">
+          <span aria-hidden="true">✓</span><div><strong>처리 완료</strong><p>{{ message }}</p></div>
+        </div>
+      {% endif %}
+      {% if error %}
+        <div class="alert alert-error" role="alert">
+          <span aria-hidden="true">!</span><div><strong>처리할 수 없습니다</strong><p>{{ error }}</p></div>
+        </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+<script>
+(() => {
+  const root = document.documentElement;
+  const toggle = document.querySelector("[data-nav-toggle]");
+  const closeTargets = document.querySelectorAll("[data-nav-close], .sidebar .nav-link");
+  const setOpen = (open) => {
+    root.classList.toggle("nav-open", open);
+    toggle?.setAttribute("aria-expanded", String(open));
+  };
+  toggle?.addEventListener("click", () => setOpen(!root.classList.contains("nav-open")));
+  closeTargets.forEach((target) => target.addEventListener("click", () => setOpen(false)));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setOpen(false);
+  });
+})();
+</script>
 </body>
 </html>

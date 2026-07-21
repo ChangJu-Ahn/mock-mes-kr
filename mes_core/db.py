@@ -319,7 +319,7 @@ def upsert_bom(product_code, step_code, material_code, qty_per_wafer, uom=None):
             "INSERT INTO bom (product_code, step_code, material_code, qty_per_wafer, uom)"
             " VALUES (?,?,?,?,?)"
             " ON CONFLICT(product_code, step_code, material_code)"
-            " DO UPDATE SET qty_per_wafer = excluded.qty_per_wafer, uom = excluded.uom",
+            " DO UPDATE SET qty_per_wafer = excluded.qty_per_wafer, uom = COALESCE(excluded.uom, bom.uom)",
             (product_code, step_code, material_code, qty_per_wafer, uom),
         )
         row = conn.execute(

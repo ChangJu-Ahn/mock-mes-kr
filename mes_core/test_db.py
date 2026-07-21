@@ -126,6 +126,36 @@ class MaterialBomTests(DbTestBase):
         self.assertEqual(short[0]["short"], 60.0)
         self.assertEqual(db.get_material("PR-EUV")["qty"], 0.0)  # floored
 
+    def test_upsert_bom_preserves_uom_when_omitted(self):
+        """Verify that upsert_bom preserves existing uom when caller omits it (passes None)."""
+        db = self.db
+        # Initial state: P1/PKG/SUBSTR has qty=1.0, uom='EA' (seeded)
+        initial = db.list_bom("P1", "PKG")[0]
+        self.assertEqual(initial["qty_per_wafer"], 1.0)
+        self.assertEqual(initial["uom"], "EA")
+        
+        # Upsert same key with new qty but NO uom (uom=None, omitted)
+        db.upsert_bom("P1", "PKG", "SUBSTR", 3.0)
+        
+        # Verify: qty updated, uom PRESERVED (not set to NULL)
+        updated = db.list_bom("P1", "PKG")[0]
+        self.assertEqual(updated["qty_per_wafer"], 3.0)
+        self.assertEqual(updated["uom"], "EA", "uom should be preserved when omitted in upsert")
+        
+    def test_upsert_bom_updates_uom_when_provided(self):
+        """Verify that passing a new uom DOES update it."""
+        db = self.db
+        # Initial state: P1/PKG/SUBSTR has uom='EA'
+        initial = db.list_bom("P1", "PKG")[0]
+        self.assertEqual(initial["uom"], "EA")
+        
+        # Upsert same key with new uom
+        db.upsert_bom("P1", "PKG", "SUBSTR", 2.5, uom="BOX")
+        
+        # Verify: uom updated
+        updated = db.list_bom("P1", "PKG")[0]
+        self.assertEqual(updated["uom"], "BOX")
+
 
 if __name__ == "__main__":
     unittest.main()

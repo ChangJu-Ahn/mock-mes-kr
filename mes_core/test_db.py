@@ -157,5 +157,45 @@ class MaterialBomTests(DbTestBase):
         self.assertEqual(updated["uom"], "BOX")
 
 
+class ProductResultTests(DbTestBase):
+    def setUp(self):
+        super().setUp()
+        self._seed_master()
+        with self.db.get_conn() as conn:
+            conn.execute(
+                "INSERT INTO lot (lot_id, product_code, tech_node, start_qty, wafer_qty,"
+                " priority, current_step, status, start_date)"
+                " VALUES ('LOT1','P1','5nm',25,25,'Normal','PHOTO','Running','2026-01-01')"
+            )
+
+    def test_add_product_inventory_upsert(self):
+        db = self.db
+        with db.get_conn() as conn:
+            db._add_product_inventory(conn, "P1", "SEMI", 10)
+            db._add_product_inventory(conn, "P1", "SEMI", 5)
+        inv = db.list_product_inventory(product_code="P1", item_type="SEMI")
+        self.assertEqual(inv[0]["qty"], 15.0)
+        self.assertEqual(inv[0]["product_name"], "Prod One")
+
+    def test_register_product_result_manual(self):
+        db = self.db
+        res = db.register_product_result("LOT1", "FIN", 100, scrap_qty=5)
+        self.assertEqual(res["source"], "MANUAL")
+        self.assertEqual(res["product_code"], "P1")
+        self.assertEqual(res["item_type"], "FIN")
+        inv = db.list_product_inventory(product_code="P1", item_type="FIN")
+        self.assertEqual(inv[0]["qty"], 100.0)
+        rows = db.list_product_results(product_code="P1", source="MANUAL")
+        self.assertEqual(len(rows), 1)
+
+    def test_register_product_result_bad_type_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.register_product_result("LOT1", "WIDGET", 10)
+
+    def test_register_product_result_unknown_lot_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.register_product_result("NOPE", "FIN", 10)
+
+
 if __name__ == "__main__":
     unittest.main()

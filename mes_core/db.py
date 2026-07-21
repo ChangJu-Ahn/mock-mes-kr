@@ -362,3 +362,97 @@ def _consume_materials(conn, product_code, step_code, units):
         conn.execute("UPDATE material SET qty = ? WHERE material_code = ?", (new_qty, b["material_code"]))
     return shortages
 
+
+# --------------------------------------------------------------------------- #
+# 제품 인벤토리 (product_inventory) + 제품실적 (product_result)
+# --------------------------------------------------------------------------- #
+
+def list_product_inventory(product_code=None, item_type=None):
+    sql = (
+        "SELECT pi.product_code, p.product_name, pi.item_type, pi.qty, pi.uom, pi.location "
+        "FROM product_inventory pi "
+        "LEFT JOIN product p ON p.product_code = pi.product_code WHERE 1=1"
+    )
+    args: list[Any] = []
+    if product_code:
+        sql += " AND pi.product_code = ?"; args.append(product_code)
+    if item_type:
+        sql += " AND pi.item_type = ?"; args.append(item_type)
+    sql += " ORDER BY pi.product_code, pi.item_type"
+    with get_conn() as conn:
+        return _rows(conn.execute(sql, args))
+
+
+def list_product_results(product_code=None, item_type=None, source=None,
+                         lot_id=None, date_from=None, date_to=None, limit=100):
+    sql = (
+        "SELECT pr.*, p.product_name FROM product_result pr "
+        "LEFT JOIN product p ON p.product_code = pr.product_code WHERE 1=1"
+    )
+    args: list[Any] = []
+    if product_code:
+        sql += " AND pr.product_code = ?"; args.append(product_code)
+    if item_type:
+        sql += " AND pr.item_type = ?"; args.append(item_type)
+    if source:
+        sql += " AND pr.source = ?"; args.append(source)
+    if lot_id:
+        sql += " AND pr.lot_id = ?"; args.append(lot_id)
+    if date_from:
+        sql += " AND pr.result_date >= ?"; args.append(date_from)
+    if date_to:
+        sql += " AND pr.result_date <= ?"; args.append(date_to)
+    sql += " ORDER BY pr.result_date DESC, pr.id DESC LIMIT ?"; args.append(limit)
+    with get_conn() as conn:
+        return _rows(conn.execute(sql, args))
+
+
+def _add_product_inventory(conn, product_code, item_type, delta, uom="EA", location=None):
+    conn.execute(
+        "INSERT INTO product_inventory (product_code, item_type, qty, uom, location)"
+        " VALUES (?,?,?,?,?)"
+        " ON CONFLICT(product_code, item_type) DO UPDATE SET qty = qty + excluded.qty",
+        (product_code, item_type, delta, uom, location),
+    )
+
+
+def _insert_product_result(conn, *, result_date, lot_id, product_code, item_type,
+                           good_qty, scrap_qty, yield_pct, source, line=None, eqp_id=None):
+    cur = conn.execute(
+        "INSERT INTO product_result"
+        " (result_date, lot_id, product_code, item_type, good_qty, scrap_qty,"
+        "  yield_pct, source, line, eqp_id)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (result_date, lot_id, product_code, item_type, good_qty, scrap_qty,
+         yield_pct, source, line, eqp_id),
+    )
+    return cur.lastrowid
+
+
+def register_product_result(lot_id, item_type, good_qty, scrap_qty=0):
+    item_type = str(item_type).upper()
+    if item_type not in ("SEMI", "FIN"):
+        raise ValueError(f"item_type must be SEMI or FIN, got {item_type!r}")
+    good_qty = int(good_qty)
+    scrap_qty = int(scrap_qty or 0)
+    if good_qty < 0:
+        raise ValueError(f"good_qty must be >= 0, got {good_qty}")
+    now = _now_iso()
+    with get_conn() as conn:
+        lot = conn.execute("SELECT * FROM lot WHERE lot_id = ?", (lot_id,)).fetchone()
+        if lot is None:
+            raise ValueError(f"unknown lot_id: {lot_id!r}")
+        product_code = lot["product_code"]
+        total = good_qty + scrap_qty
+        y = round(good_qty / total * 100, 2) if total else 0.0
+        pr_id = _insert_product_result(
+            conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
+            item_type=item_type, good_qty=good_qty, scrap_qty=scrap_qty,
+            yield_pct=y, source="MANUAL",
+        )
+        _add_product_inventory(
+            conn, product_code, item_type, good_qty,
+            uom="EA", location=("WH-FG" if item_type == "FIN" else "WH-SEMI"),
+        )
+        return dict(conn.execute("SELECT * FROM product_result WHERE id = ?", (pr_id,)).fetchone())
+

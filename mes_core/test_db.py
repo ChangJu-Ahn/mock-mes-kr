@@ -80,5 +80,52 @@ class SchemaTests(DbTestBase):
         self.assertIn("bom", c)
 
 
+class MaterialBomTests(DbTestBase):
+    def setUp(self):
+        super().setUp()
+        self._seed_master()
+
+    def test_list_products_and_codes(self):
+        self.assertEqual(self.db.list_product_codes(), ["P1"])
+        self.assertEqual(self.db.list_products()[0]["product_name"], "Prod One")
+
+    def test_receive_material_adds_and_creates(self):
+        db = self.db
+        db.receive_material("PR-EUV", 50)  # existing 100 -> 150
+        self.assertEqual(db.get_material("PR-EUV")["qty"], 150.0)
+        db.receive_material("NEW-GAS", 20, material_name="New Gas", category="Gas", uom="BTL")
+        self.assertEqual(db.get_material("NEW-GAS")["qty"], 20.0)
+        self.assertEqual(db.get_material("NEW-GAS")["material_name"], "New Gas")
+
+    def test_upsert_and_delete_bom(self):
+        db = self.db
+        row = db.upsert_bom("P1", "TEST", "PR-EUV", 0.5, uom="L")
+        self.assertEqual(db.list_bom(step_code="TEST")[0]["qty_per_wafer"], 0.5)
+        db.upsert_bom("P1", "TEST", "PR-EUV", 0.9)  # update same triple
+        self.assertEqual(db.list_bom(step_code="TEST")[0]["qty_per_wafer"], 0.9)
+        self.assertTrue(db.delete_bom(row["id"]))
+        self.assertEqual(db.list_bom(step_code="TEST"), [])
+
+    def test_materials_by_step_joins_bom(self):
+        rows = self.db.materials_by_step("PHOTO")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["material_code"], "PR-EUV")
+        self.assertEqual(rows[0]["on_hand_qty"], 100.0)
+        self.assertEqual(rows[0]["qty_per_wafer"], 2.0)
+
+    def test_consume_materials_floors_and_reports_shortage(self):
+        db = self.db
+        with db.get_conn() as conn:
+            short = db._consume_materials(conn, "P1", "PHOTO", 40)  # need 2*40=80 <= 100
+            self.assertEqual(short, [])
+        self.assertEqual(db.get_material("PR-EUV")["qty"], 20.0)
+        with db.get_conn() as conn:
+            short = db._consume_materials(conn, "P1", "PHOTO", 40)  # need 80 > 20 -> shortage
+        self.assertEqual(len(short), 1)
+        self.assertEqual(short[0]["material_code"], "PR-EUV")
+        self.assertEqual(short[0]["short"], 60.0)
+        self.assertEqual(db.get_material("PR-EUV")["qty"], 0.0)  # floored
+
+
 if __name__ == "__main__":
     unittest.main()

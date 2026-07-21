@@ -367,6 +367,7 @@ class PackagingTests(DbTestBase):
         self.assertEqual(semi, 5.0)   # 20 - 15
         self.assertEqual(fin, 14.0)   # +14
         self.assertEqual(db.get_material("SUBSTR")["qty"], 100.0 - 15.0)  # PKG BOM 1*15
+        self.assertEqual(res["shortages"], [])
 
     def test_package_insufficient_semi_rejected(self):
         with self.assertRaises(ValueError):
@@ -375,6 +376,29 @@ class PackagingTests(DbTestBase):
     def test_package_unknown_product_rejected(self):
         with self.assertRaises(ValueError):
             self.db.package("NOPE", 1)
+
+    def test_package_bad_scrap_rejected(self):
+        db = self.db
+        with db.get_conn() as conn:
+            db._add_product_inventory(conn, "P1", "SEMI", 200)
+        with self.assertRaises(ValueError):
+            db.package("P1", 10, scrap_qty=11)   # scrap > in
+        with self.assertRaises(ValueError):
+            db.package("P1", 10, scrap_qty=-1)   # scrap < 0
+
+    def test_package_material_shortage_is_nonfatal(self):
+        db = self.db
+        with db.get_conn() as conn:
+            db._add_product_inventory(conn, "P1", "SEMI", 200)
+            conn.execute("UPDATE material SET qty=5 WHERE material_code='SUBSTR'")
+        res = db.package("P1", 20)   # needs 20 SUBSTR, only 5 available
+        self.assertIsNotNone(res)
+        self.assertTrue(len(res["shortages"]) > 0)
+        codes = [s["material_code"] for s in res["shortages"]]
+        self.assertIn("SUBSTR", codes)
+        fin = db.list_product_inventory(product_code="P1", item_type="FIN")
+        self.assertGreater(fin[0]["qty"], 0)   # FIN inventory increased
+        self.assertEqual(db.get_material("SUBSTR")["qty"], 0.0)   # floored at 0
 
 
 if __name__ == "__main__":

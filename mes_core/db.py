@@ -722,7 +722,7 @@ def package(product_code, in_qty, scrap_qty=0, lot_id=None, eqp_id=None, operato
         _add_product_inventory(conn, product_code, "SEMI", -in_qty)
         _add_product_inventory(conn, product_code, "FIN", out_qty, uom="EA", location="WH-FG")
         shortages = _consume_materials(conn, product_code, "PKG", in_qty)
-        y = round(out_qty / in_qty * 100, 2) if in_qty else 0.0
+        y = round(out_qty / in_qty * 100, 2)
         pr_id = _insert_product_result(
             conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
             item_type="FIN", good_qty=out_qty, scrap_qty=scrap_qty, yield_pct=y,

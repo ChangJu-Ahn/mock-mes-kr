@@ -21,7 +21,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+from typing import Any
 
 DEFAULT_DB_PATH = "/data/mes.db"
 
@@ -349,8 +349,7 @@ def _consume_materials(conn, product_code, step_code, units):
         if need <= 0:
             continue
         on_hand = b["on_hand"] or 0
-        new_qty = on_hand - need
-        if new_qty < 0:
+        if on_hand < need:
             shortages.append({
                 "material_code": b["material_code"],
                 "material_name": b["material_name"],
@@ -358,8 +357,7 @@ def _consume_materials(conn, product_code, step_code, units):
                 "available": round(on_hand, 4),
                 "short": round(need - on_hand, 4),
             })
-            new_qty = 0
-        conn.execute("UPDATE material SET qty = ? WHERE material_code = ?", (new_qty, b["material_code"]))
+        conn.execute("UPDATE material SET qty = MAX(0, qty - ?) WHERE material_code = ?", (need, b["material_code"]))
     return shortages
 
 
@@ -619,74 +617,80 @@ def register_process_result(lot_id, step_code, in_qty=None, scrap_qty=0,
     in_time = in_time or now
     out_time = out_time or now
     with get_conn() as conn:
-        lot = conn.execute("SELECT * FROM lot WHERE lot_id = ?", (lot_id,)).fetchone()
-        if lot is None:
-            raise ValueError(f"unknown lot_id: {lot_id!r}")
-        step = conn.execute("SELECT * FROM process_step WHERE step_code = ?", (step_code,)).fetchone()
-        if step is None:
-            raise ValueError(f"unknown step_code: {step_code!r}")
-        if in_qty is None:
-            in_qty = lot["wafer_qty"] if lot["wafer_qty"] is not None else (lot["start_qty"] or 0)
-        in_qty = int(in_qty)
-        scrap_qty = int(scrap_qty or 0)
-        if in_qty < 0:
-            raise ValueError(f"in_qty must be >= 0, got {in_qty}")
-        if scrap_qty < 0 or scrap_qty > in_qty:
-            raise ValueError(f"scrap_qty must be between 0 and in_qty ({in_qty}), got {scrap_qty}")
-        out_qty = in_qty - scrap_qty
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            lot = conn.execute("SELECT * FROM lot WHERE lot_id = ?", (lot_id,)).fetchone()
+            if lot is None:
+                raise ValueError(f"unknown lot_id: {lot_id!r}")
+            step = conn.execute("SELECT * FROM process_step WHERE step_code = ?", (step_code,)).fetchone()
+            if step is None:
+                raise ValueError(f"unknown step_code: {step_code!r}")
+            if in_qty is None:
+                in_qty = lot["wafer_qty"] if lot["wafer_qty"] is not None else (lot["start_qty"] or 0)
+            in_qty = int(in_qty)
+            scrap_qty = int(scrap_qty or 0)
+            if in_qty < 0:
+                raise ValueError(f"in_qty must be >= 0, got {in_qty}")
+            if scrap_qty < 0 or scrap_qty > in_qty:
+                raise ValueError(f"scrap_qty must be between 0 and in_qty ({in_qty}), got {scrap_qty}")
+            out_qty = in_qty - scrap_qty
 
-        new_id = conn.execute(
-            "INSERT INTO process_result"
-            " (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty, defect_code,"
-            "  in_time, out_time, operator, result) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty, defect_code,
-             in_time, out_time, operator, result),
-        ).lastrowid
+            new_id = conn.execute(
+                "INSERT INTO process_result"
+                " (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty, defect_code,"
+                "  in_time, out_time, operator, result) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty, defect_code,
+                 in_time, out_time, operator, result),
+            ).lastrowid
 
-        product_code = lot["product_code"]
-        shortages = _consume_materials(conn, product_code, step_code, in_qty)
+            product_code = lot["product_code"]
+            shortages = _consume_materials(conn, product_code, step_code, in_qty)
 
-        last_fab_seq = conn.execute(
-            "SELECT MAX(seq) FROM process_step WHERE stage = 'FAB'"
-        ).fetchone()[0]
-        prev_status = lot["status"]
-        passed = str(result).lower() in _FAB_PASS
-        is_last_fab = step["stage"] == "FAB" and step["seq"] == last_fab_seq
-
-        new_status = prev_status
-        if is_last_fab and passed:
-            new_status = "Done"
-        elif prev_status == "Done":
-            new_status = "Running"
-        conn.execute(
-            "UPDATE lot SET current_step = ?, status = ?, wafer_qty = ? WHERE lot_id = ?",
-            (step_code, new_status, out_qty, lot_id),
-        )
-
-        semi_receipt = None
-        if is_last_fab and passed and prev_status != "Done":
-            cum_scrap = conn.execute(
-                "SELECT COALESCE(SUM(scrap_qty),0) FROM process_result WHERE lot_id = ?",
-                (lot_id,),
+            last_fab_seq = conn.execute(
+                "SELECT MAX(seq) FROM process_step WHERE stage = 'FAB'"
             ).fetchone()[0]
-            start_qty = lot["start_qty"] or (out_qty + cum_scrap)
-            y = round(out_qty / start_qty * 100, 2) if start_qty else 0.0
-            pr_id = _insert_product_result(
-                conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
-                item_type="SEMI", good_qty=out_qty, scrap_qty=int(cum_scrap),
-                yield_pct=y, source="AUTO_FAB", eqp_id=eqp_id,
-            )
-            _add_product_inventory(conn, product_code, "SEMI", out_qty, uom="EA", location="WH-SEMI")
-            semi_receipt = {
-                "product_result_id": pr_id, "product_code": product_code,
-                "item_type": "SEMI", "good_qty": out_qty,
-            }
+            prev_status = lot["status"]
+            passed = str(result).lower() in _FAB_PASS
+            is_last_fab = step["stage"] == "FAB" and step["seq"] == last_fab_seq
 
-        row = conn.execute(
-            "SELECT pr.*, ps.step_name FROM process_result pr "
-            "LEFT JOIN process_step ps ON ps.step_code = pr.step_code WHERE pr.id = ?",
-            (new_id,),
-        ).fetchone()
+            new_status = prev_status
+            if is_last_fab and passed:
+                new_status = "Done"
+            elif prev_status == "Done":
+                new_status = "Running"
+            conn.execute(
+                "UPDATE lot SET current_step = ?, status = ?, wafer_qty = ? WHERE lot_id = ?",
+                (step_code, new_status, out_qty, lot_id),
+            )
+
+            semi_receipt = None
+            if is_last_fab and passed and prev_status != "Done":
+                cum_scrap = conn.execute(
+                    "SELECT COALESCE(SUM(scrap_qty),0) FROM process_result WHERE lot_id = ?",
+                    (lot_id,),
+                ).fetchone()[0]
+                start_qty = lot["start_qty"] or (out_qty + cum_scrap)
+                y = round(out_qty / start_qty * 100, 2) if start_qty else 0.0
+                pr_id = _insert_product_result(
+                    conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
+                    item_type="SEMI", good_qty=out_qty, scrap_qty=int(cum_scrap),
+                    yield_pct=y, source="AUTO_FAB", eqp_id=eqp_id,
+                )
+                _add_product_inventory(conn, product_code, "SEMI", out_qty, uom="EA", location="WH-SEMI")
+                semi_receipt = {
+                    "product_result_id": pr_id, "product_code": product_code,
+                    "item_type": "SEMI", "good_qty": out_qty,
+                }
+
+            row = conn.execute(
+                "SELECT pr.*, ps.step_name FROM process_result pr "
+                "LEFT JOIN process_step ps ON ps.step_code = pr.step_code WHERE pr.id = ?",
+                (new_id,),
+            ).fetchone()
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
     out = dict(row)
     out["shortages"] = shortages
     out["semi_receipt"] = semi_receipt
@@ -706,29 +710,35 @@ def package(product_code, in_qty, scrap_qty=0, lot_id=None, eqp_id=None, operato
         raise ValueError(f"scrap_qty must be between 0 and in_qty ({in_qty}), got {scrap_qty}")
     now = _now_iso()
     with get_conn() as conn:
-        prod = conn.execute("SELECT * FROM product WHERE product_code = ?", (product_code,)).fetchone()
-        if prod is None:
-            raise ValueError(f"unknown product_code: {product_code!r}")
-        semi = conn.execute(
-            "SELECT qty FROM product_inventory WHERE product_code = ? AND item_type = 'SEMI'",
-            (product_code,),
-        ).fetchone()
-        semi_qty = semi["qty"] if semi else 0
-        if semi_qty < in_qty:
-            raise ValueError(
-                f"insufficient SEMI stock for {product_code}: need {in_qty}, have {semi_qty}"
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            prod = conn.execute("SELECT * FROM product WHERE product_code = ?", (product_code,)).fetchone()
+            if prod is None:
+                raise ValueError(f"unknown product_code: {product_code!r}")
+            semi = conn.execute(
+                "SELECT qty FROM product_inventory WHERE product_code = ? AND item_type = 'SEMI'",
+                (product_code,),
+            ).fetchone()
+            semi_qty = semi["qty"] if semi else 0
+            if semi_qty < in_qty:
+                raise ValueError(
+                    f"insufficient SEMI stock for {product_code}: need {in_qty}, have {semi_qty}"
+                )
+            out_qty = in_qty - scrap_qty
+            _add_product_inventory(conn, product_code, "SEMI", -in_qty)
+            _add_product_inventory(conn, product_code, "FIN", out_qty, uom="EA", location="WH-FG")
+            shortages = _consume_materials(conn, product_code, "PKG", in_qty)
+            y = round(out_qty / in_qty * 100, 2)
+            pr_id = _insert_product_result(
+                conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
+                item_type="FIN", good_qty=out_qty, scrap_qty=scrap_qty, yield_pct=y,
+                source="AUTO_PACK", eqp_id=eqp_id,
             )
-        out_qty = in_qty - scrap_qty
-        _add_product_inventory(conn, product_code, "SEMI", -in_qty)
-        _add_product_inventory(conn, product_code, "FIN", out_qty, uom="EA", location="WH-FG")
-        shortages = _consume_materials(conn, product_code, "PKG", in_qty)
-        y = round(out_qty / in_qty * 100, 2)
-        pr_id = _insert_product_result(
-            conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
-            item_type="FIN", good_qty=out_qty, scrap_qty=scrap_qty, yield_pct=y,
-            source="AUTO_PACK", eqp_id=eqp_id,
-        )
-        row = conn.execute("SELECT * FROM product_result WHERE id = ?", (pr_id,)).fetchone()
+            row = conn.execute("SELECT * FROM product_result WHERE id = ?", (pr_id,)).fetchone()
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
     out = dict(row)
     out["shortages"] = shortages
     return out

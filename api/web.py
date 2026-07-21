@@ -83,7 +83,7 @@ def lots_start(product_code: str = Form(...), start_qty: int = Form(...),
                priority: str = Form("Normal")):
     try:
         lot = db.start_lot(product_code, start_qty, priority=priority)
-    except (ValueError, Exception) as exc:
+    except ValueError as exc:
         return _redirect("/lots", error=str(exc))
     return _redirect("/lots", message=f"Lot+{lot['lot_id']}+started")
 

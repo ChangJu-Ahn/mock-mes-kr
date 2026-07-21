@@ -1,0 +1,17 @@
+# Keep image small and builds fast
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+data
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+.github
+infra
+README.md
+docker-compose.yml

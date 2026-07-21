@@ -425,5 +425,50 @@ class DashboardTests(DbTestBase):
         self.assertEqual(s["wip_total_lots"], sum(w["lot_count"] for w in s["wip_by_step"]))
 
 
+class SeedTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MES_DB_PATH"] = str(TEST_DB)
+        TEST_DB.parent.mkdir(exist_ok=True)
+        from mes_core import db, seed
+        importlib.reload(db)
+        importlib.reload(seed)
+        cls.db, cls.seed = db, seed
+        seed.seed()
+
+    @classmethod
+    def tearDownClass(cls):
+        for f in TEST_DB.parent.glob(TEST_DB.name + "*"):
+            f.unlink(missing_ok=True)
+
+    def test_master_counts(self):
+        c = self.db.counts()
+        self.assertEqual(c["product"], 4)
+        self.assertEqual(c["process_step"], 9)      # 8 FAB + PKG
+        self.assertEqual(c["equipment"], 9)
+        self.assertEqual(c["material"], 12)
+        self.assertGreaterEqual(c["bom"], 24)
+        self.assertEqual(c["lot"], 16)
+
+    def test_done_lots_produced_semi(self):
+        done = self.db.list_lots(status="Done")
+        self.assertEqual(len(done), 6)
+        auto_fab = self.db.list_product_results(source="AUTO_FAB")
+        self.assertEqual(len(auto_fab), 6)
+        semi = self.db.list_product_inventory(item_type="SEMI")
+        self.assertTrue(sum(r["qty"] for r in semi) > 0)
+
+    def test_packaging_and_manual_results_present(self):
+        self.assertEqual(len(self.db.list_product_results(source="AUTO_PACK")), 3)
+        self.assertEqual(len(self.db.list_product_results(source="MANUAL")), 1)
+        fin = self.db.list_product_inventory(item_type="FIN")
+        self.assertTrue(sum(r["qty"] for r in fin) > 0)
+
+    def test_wip_only_non_done(self):
+        wip = self.db.get_wip()
+        self.assertTrue(all(w["lot_count"] > 0 for w in wip))
+        self.assertEqual(sum(w["lot_count"] for w in wip), 10)  # 2 Hold + 8 Running
+
+
 if __name__ == "__main__":
     unittest.main()

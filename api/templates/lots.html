@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Lots - Mock MES{% endblock %}
+{% block content %}
+<h1>Lots / 로트</h1>
+<section class="panel">
+  <form method="get" action="/lots" class="inline-form">
+    <input name="status_filter" value="{{ filters.status_filter }}" placeholder="Status">
+    <select name="product">
+      <option value="">All products</option>
+      {% for product in products %}<option value="{{ product }}" {% if filters.product == product %}selected{% endif %}>{{ product }}</option>{% endfor %}
+    </select>
+    <select name="current_step">
+      <option value="">All steps</option>
+      {% for step in route %}<option value="{{ step.step_code }}" {% if filters.current_step == step.step_code %}selected{% endif %}>{{ step.step_code }} - {{ step.step_name }}</option>{% endfor %}
+    </select>
+    <input type="number" name="limit" min="1" value="{{ filters.limit }}">
+    <button type="submit">Filter</button>
+  </form>
+  <table>
+    <thead><tr><th>Lot</th><th>Product</th><th>Tech</th><th>Wafers</th><th>Priority</th><th>Current step</th><th>Status</th><th>Start</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr><td><a href="/lots/{{ row.lot_id }}">{{ row.lot_id }}</a></td><td>{{ row.product }}</td><td>{{ row.tech_node }}</td><td>{{ row.wafer_qty }}</td><td>{{ row.priority }}</td><td>{{ row.current_step }} - {{ row.current_step_name }}</td><td>{{ row.status }}</td><td>{{ row.start_date }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

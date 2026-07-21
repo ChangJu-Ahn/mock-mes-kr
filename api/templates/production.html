@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Production - Mock MES{% endblock %}
+{% block content %}
+<h1>Production results / 실적</h1>
+<section class="panel">
+  <h2>Register production result</h2>
+  <form method="post" action="/production-results" class="grid-form">
+    <label>Product
+      <select name="product" required>
+        {% for product in products %}<option value="{{ product }}">{{ product }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Good qty <input type="number" name="good_qty" min="0" required></label>
+    <label>Scrap qty <input type="number" name="scrap_qty" min="0" value="0"></label>
+    <label>Result date <input type="date" name="result_date"></label>
+    <label>Line <input name="line" placeholder="FAB1-L1"></label>
+    <label>Equipment <input name="eqp_id" placeholder="EQP-TEST01"></label>
+    <label>Yield % <input type="number" step="0.01" name="yield_pct" placeholder="auto"></label>
+    <button type="submit">실적 입력</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Search</h2>
+  <form method="get" action="/production" class="inline-form">
+    <select name="product">
+      <option value="">All products</option>
+      {% for product in products %}<option value="{{ product }}" {% if filters.product == product %}selected{% endif %}>{{ product }}</option>{% endfor %}
+    </select>
+    <input type="date" name="date_from" value="{{ filters.date_from }}">
+    <input type="date" name="date_to" value="{{ filters.date_to }}">
+    <input type="number" name="limit" min="1" value="{{ filters.limit }}">
+    <button type="submit">Filter</button>
+  </form>
+  <table>
+    <thead><tr><th>ID</th><th>Date</th><th>Line</th><th>Eqp</th><th>Product</th><th>Good</th><th>Scrap</th><th>Yield %</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr><td>{{ row.id }}</td><td>{{ row.result_date }}</td><td>{{ row.line or "" }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.product }}</td><td>{{ row.good_qty }}</td><td>{{ row.scrap_qty }}</td><td>{{ "%.2f"|format(row.yield_pct) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

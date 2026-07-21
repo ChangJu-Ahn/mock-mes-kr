@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ lot.lot_id }} - Mock MES{% endblock %}
+{% block content %}
+<h1>Lot {{ lot.lot_id }}</h1>
+<section class="panel detail-grid">
+  <div><strong>Product</strong><span>{{ lot.product }}</span></div>
+  <div><strong>Tech node</strong><span>{{ lot.tech_node }}</span></div>
+  <div><strong>Wafer qty</strong><span>{{ lot.wafer_qty }}</span></div>
+  <div><strong>Priority</strong><span>{{ lot.priority }}</span></div>
+  <div><strong>Current step</strong><span>{{ lot.current_step }} - {{ lot.current_step_name }}</span></div>
+  <div><strong>Status</strong><span>{{ lot.status }}</span></div>
+  <div><strong>Start date</strong><span>{{ lot.start_date }}</span></div>
+</section>
+
+<section class="panel">
+  <h2>Process history</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Step</th><th>Eqp</th><th>In</th><th>Out</th><th>Operator</th><th>Result</th></tr></thead>
+    <tbody>
+      {% for row in lot.history %}
+      <tr><td>{{ row.id }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.in_time }}</td><td>{{ row.out_time }}</td><td>{{ row.operator or "" }}</td><td>{{ row.result }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

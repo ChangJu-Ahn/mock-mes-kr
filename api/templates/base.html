@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Mock MES{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Mock MES</a>
+    <nav>
+      <a href="/production">실적 Production</a>
+      <a href="/inventory">재고 Inventory</a>
+      <a href="/wip">재공 WIP</a>
+      <a href="/process">공정 Process</a>
+      <a href="/lots">로트 Lots</a>
+      <a href="/api/docs">API Docs</a>
+    </nav>
+  </header>
+  <main class="container">
+    {% if message %}<div class="alert success">{{ message }}</div>{% endif %}
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

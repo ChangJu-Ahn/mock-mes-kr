@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Process - Mock MES{% endblock %}
+{% block content %}
+<h1>Process / 공정</h1>
+<section class="panel">
+  <h2>Register process move</h2>
+  <form method="post" action="/process/moves" class="grid-form">
+    <label>Lot
+      <select name="lot_id" required>{% for lot_id in lot_ids %}<option value="{{ lot_id }}">{{ lot_id }}</option>{% endfor %}</select>
+    </label>
+    <label>Step
+      <select name="step_code" required>{% for step in route %}<option value="{{ step.step_code }}">{{ step.seq }} {{ step.step_code }} - {{ step.step_name }}</option>{% endfor %}</select>
+    </label>
+    <label>Equipment
+      <select name="eqp_id"><option value="">None</option>{% for eqp in equipment %}<option value="{{ eqp.eqp_id }}">{{ eqp.eqp_id }} - {{ eqp.eqp_name }}</option>{% endfor %}</select>
+    </label>
+    <label>Operator <input name="operator" placeholder="kim.js"></label>
+    <label>Result
+      <select name="result"><option>Pass</option><option>Fail</option><option>Hold</option><option>Rework</option></select>
+    </label>
+    <label>In time <input name="in_time" placeholder="auto"></label>
+    <label>Out time <input name="out_time" placeholder="auto"></label>
+    <button type="submit">공정 입력</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Route</h2>
+  <table>
+    <thead><tr><th>Seq</th><th>Code</th><th>Name</th><th>Operation</th><th>Eqp type</th></tr></thead>
+    <tbody>{% for step in route %}<tr><td>{{ step.seq }}</td><td>{{ step.step_code }}</td><td>{{ step.step_name }}</td><td>{{ step.operation }}</td><td>{{ step.eqp_type }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Recent history</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Lot</th><th>Step</th><th>Eqp</th><th>In</th><th>Out</th><th>Operator</th><th>Result</th></tr></thead>
+    <tbody>{% for row in history %}<tr><td>{{ row.id }}</td><td>{{ row.lot_id }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.in_time }}</td><td>{{ row.out_time }}</td><td>{{ row.operator or "" }}</td><td>{{ row.result }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endblock %}

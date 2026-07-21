@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Mock MES{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<section class="cards">
+  {% for name, value in counts.items() %}
+  <article class="card">
+    <span>{{ name }}</span>
+    <strong>{{ value }}</strong>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="panel">
+  <h2>Quick links</h2>
+  <div class="actions">
+    <a class="button" href="/production">실적 입력</a>
+    <a class="button" href="/process">공정 입력</a>
+    <a class="button" href="/api/docs">REST OpenAPI docs</a>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>WIP overview</h2>
+  <table>
+    <thead><tr><th>Seq</th><th>Step</th><th>Lots</th><th>Wafers</th></tr></thead>
+    <tbody>
+      {% for row in wip %}
+      <tr><td>{{ row.seq }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.lot_count }}</td><td>{{ row.wafer_qty }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

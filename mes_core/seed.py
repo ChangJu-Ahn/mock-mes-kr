@@ -69,6 +69,9 @@ INVENTORY = [
 PRIORITIES = ["Hot", "Normal", "Normal", "Normal", "Low"]
 OPERATORS = ["kim.js", "lee.mh", "park.sy", "choi.dw", "jung.hy"]
 
+# Common semiconductor defect/scrap reason codes (used when scrap_qty > 0).
+DEFECTS = ["Particle", "Scratch", "Overlay", "CD-OOS", "Etch-Residue", "Contamination"]
+
 PRODUCT_TECH = {p: t for p, t in PRODUCTS}
 STEP_EQP_TYPE = {code: eqp_type for _, code, _, _, eqp_type in ROUTE}
 EQP_BY_TYPE: dict[str, list[str]] = {}
@@ -80,6 +83,14 @@ def _pick_eqp(step_code: str, rnd: random.Random) -> str | None:
     eqp_type = STEP_EQP_TYPE.get(step_code)
     choices = EQP_BY_TYPE.get(eqp_type, [])
     return rnd.choice(choices) if choices else None
+
+
+def _scrap_for(step_code: str, in_qty: int, rnd: random.Random) -> int:
+    """Small, realistic per-step wafer scrap; a bit higher at etch/implant/test."""
+    if in_qty <= 0 or rnd.random() < 0.55:
+        return 0
+    high = step_code in ("ETCH", "IMPL", "TEST")
+    return min(in_qty, rnd.randint(1, 3 if high else 2))
 
 
 def seed() -> None:
@@ -107,66 +118,92 @@ def seed() -> None:
             INVENTORY,
         )
 
-        # --- lots + their process history ---------------------------------- #
+        # --- lots + their process history (wafer qty + defects) ------------ #
         n_lots = 18
+        lines = ["FAB1-L1", "FAB1-L2", "FAB2-L1"]
         for i in range(1, n_lots + 1):
             lot_id = f"LOT{i:04d}"
             product, tech_node = PRODUCTS[(i - 1) % len(PRODUCTS)]
-            wafer_qty = rnd.choice([25, 25, 25, 24, 12])
+            start_qty = rnd.choice([25, 25, 25, 24, 12])
             priority = rnd.choice(PRIORITIES)
             # how far along the route this lot is (index into ROUTE)
             step_idx = rnd.randint(0, len(ROUTE) - 1)
             start_offset = rnd.randint(2, 25)
             start_dt = now - timedelta(days=start_offset)
 
-            # Decide status: a few done, a few on hold, most running.
-            if step_idx == len(ROUTE) - 1 and rnd.random() < 0.5:
+            # Balanced, reproducible distribution: a few Done, a couple Hold,
+            # the rest Running spread across the route (good WIP + 실적 linkage).
+            if i <= 4:
                 status = "Done"
                 current_idx = len(ROUTE) - 1
-            elif rnd.random() < 0.12:
+            elif i in (5, 6):
                 status = "Hold"
                 current_idx = step_idx
             else:
                 status = "Running"
                 current_idx = step_idx
-
             current_step = ROUTE[current_idx][1]
-            conn.execute(
-                """INSERT INTO lot
-                       (lot_id, product, tech_node, wafer_qty, priority,
-                        current_step, status, start_date)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    lot_id, product, tech_node, wafer_qty, priority,
-                    current_step, status, start_dt.strftime("%Y-%m-%d"),
-                ),
-            )
 
             # History: completed steps before the current one (+ the current
-            # step too when the lot is Done).
+            # step too when the lot is Done). Carry wafers forward, scrapping some.
             completed_upto = current_idx if status != "Done" else current_idx + 1
+            carried = start_qty
+            cum_scrap = 0
+            hist_rows = []
             t = start_dt + timedelta(hours=rnd.randint(1, 8))
             for s in range(completed_upto):
                 seq, step_code, step_name, operation, eqp_type = ROUTE[s]
+                in_qty = carried
+                scrap = _scrap_for(step_code, in_qty, rnd)
+                out_qty = in_qty - scrap
+                carried = out_qty
+                cum_scrap += scrap
+                defect = rnd.choice(DEFECTS) if scrap > 0 else None
                 dwell = timedelta(hours=rnd.randint(3, 20))
                 in_time = t
                 out_time = t + dwell
-                result = "Pass" if rnd.random() > 0.08 else rnd.choice(["Rework", "Fail"])
-                conn.execute(
-                    """INSERT INTO process_history
-                           (lot_id, step_code, eqp_id, in_time, out_time, operator, result)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        lot_id, step_code, _pick_eqp(step_code, rnd),
-                        in_time.isoformat(), out_time.isoformat(),
-                        rnd.choice(OPERATORS), result,
-                    ),
-                )
+                result = "Pass" if rnd.random() > 0.06 else rnd.choice(["Rework", "Fail"])
+                hist_rows.append((
+                    lot_id, step_code, _pick_eqp(step_code, rnd),
+                    in_qty, out_qty, scrap, defect,
+                    in_time.isoformat(), out_time.isoformat(),
+                    rnd.choice(OPERATORS), result,
+                ))
                 t = out_time + timedelta(hours=rnd.randint(1, 12))
 
-        # --- production results (~30 over recent dates) -------------------- #
-        lines = ["FAB1-L1", "FAB1-L2", "FAB2-L1"]
-        n_results = 30
+            conn.execute(
+                """INSERT INTO lot
+                       (lot_id, product, tech_node, start_qty, wafer_qty, priority,
+                        current_step, status, start_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    lot_id, product, tech_node, start_qty, carried, priority,
+                    current_step, status, start_dt.strftime("%Y-%m-%d"),
+                ),
+            )
+            conn.executemany(
+                """INSERT INTO process_history
+                       (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty,
+                        defect_code, in_time, out_time, operator, result)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                hist_rows,
+            )
+
+            # A completed lot yields a 실적(production_result) — 공정↔실적 linkage.
+            if status == "Done":
+                y = round(carried / start_qty * 100, 2) if start_qty else 0.0
+                conn.execute(
+                    """INSERT INTO production_result
+                           (result_date, line, eqp_id, product, good_qty, scrap_qty, yield_pct)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        t.strftime("%Y-%m-%d"), rnd.choice(lines), "EQP-TEST01",
+                        product, carried, cum_scrap, y,
+                    ),
+                )
+
+        # --- extra daily production results for volume (~30 total) --------- #
+        n_results = 26
         for _ in range(n_results):
             product, _tech = rnd.choice(PRODUCTS)
             days_ago = rnd.randint(0, 10)

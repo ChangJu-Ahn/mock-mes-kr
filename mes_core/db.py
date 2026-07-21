@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS lot (
     lot_id        TEXT PRIMARY KEY,
     product       TEXT NOT NULL,
     tech_node     TEXT,
+    start_qty     INTEGER,
     wafer_qty     INTEGER,
     priority      TEXT,
     current_step  TEXT,
@@ -68,14 +69,18 @@ CREATE TABLE IF NOT EXISTS lot (
 );
 
 CREATE TABLE IF NOT EXISTS process_history (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    lot_id     TEXT NOT NULL,
-    step_code  TEXT NOT NULL,
-    eqp_id     TEXT,
-    in_time    TEXT,
-    out_time   TEXT,
-    operator   TEXT,
-    result     TEXT
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    lot_id      TEXT NOT NULL,
+    step_code   TEXT NOT NULL,
+    eqp_id      TEXT,
+    in_qty      INTEGER,
+    out_qty     INTEGER,
+    scrap_qty   INTEGER DEFAULT 0,
+    defect_code TEXT,
+    in_time     TEXT,
+    out_time    TEXT,
+    operator    TEXT,
+    result      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS inventory (
@@ -315,7 +320,8 @@ def get_process_history(
     with get_conn() as conn:
         cur = conn.execute(
             f"""SELECT h.id, h.lot_id, h.step_code, ps.step_name,
-                       h.eqp_id, h.in_time, h.out_time, h.operator, h.result
+                       h.eqp_id, h.in_qty, h.out_qty, h.scrap_qty, h.defect_code,
+                       h.in_time, h.out_time, h.operator, h.result
                 FROM process_history h
                 LEFT JOIN process_step ps ON ps.step_code = h.step_code
                 {where}
@@ -330,16 +336,21 @@ def add_process_move(
     lot_id: str,
     step_code: str,
     eqp_id: Optional[str] = None,
+    in_qty: Optional[int] = None,
+    scrap_qty: int = 0,
+    defect_code: Optional[str] = None,
     operator: Optional[str] = None,
     result: str = "Pass",
     in_time: Optional[str] = None,
     out_time: Optional[str] = None,
 ) -> dict[str, Any]:
-    """공정 입력: record a process move for a lot and advance the lot.
+    """공정 입력: record a process move (with wafer quantities) and advance the lot.
 
-    Writes a ``process_history`` row and updates the lot's ``current_step``
-    (and marks it Done when the final route step passes). Raises ``ValueError``
-    if the lot or step does not exist.
+    Wafer flow: ``in_qty`` defaults to the lot's current ``wafer_qty``; ``out_qty``
+    = ``in_qty - scrap_qty`` is carried forward as the lot's new ``wafer_qty``.
+    When the final route step passes, the lot is closed (status ``Done``) and one
+    ``production_result`` (실적) row is auto-created (good = final out, scrap =
+    cumulative lot scrap). Raises ``ValueError`` on unknown lot/step or bad qty.
     """
     now = _now_iso()
     if in_time is None:
@@ -358,28 +369,61 @@ def add_process_move(
         if step is None:
             raise ValueError(f"unknown step_code: {step_code!r}")
 
+        if in_qty is None:
+            in_qty = lot["wafer_qty"] if lot["wafer_qty"] is not None else (lot["start_qty"] or 0)
+        in_qty = int(in_qty)
+        scrap_qty = int(scrap_qty or 0)
+        if in_qty < 0:
+            raise ValueError(f"in_qty must be >= 0, got {in_qty}")
+        if scrap_qty < 0 or scrap_qty > in_qty:
+            raise ValueError(f"scrap_qty must be between 0 and in_qty ({in_qty}), got {scrap_qty}")
+        out_qty = in_qty - scrap_qty
+
         cur = conn.execute(
             """INSERT INTO process_history
-                   (lot_id, step_code, eqp_id, in_time, out_time, operator, result)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (lot_id, step_code, eqp_id, in_time, out_time, operator, result),
+                   (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty,
+                    defect_code, in_time, out_time, operator, result)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty,
+             defect_code, in_time, out_time, operator, result),
         )
         new_id = cur.lastrowid
 
-        # Advance the lot to this step. If it is the last step and passed, close it.
+        # Advance the lot to this step and carry the good wafers forward.
         last_seq = conn.execute("SELECT MAX(seq) FROM process_step").fetchone()[0]
-        new_status = lot["status"]
-        if step["seq"] == last_seq and result.lower() in ("pass", "ok", "good"):
+        prev_status = lot["status"]
+        new_status = prev_status
+        passed = result.lower() in ("pass", "ok", "good")
+        is_last = step["seq"] == last_seq
+        if is_last and passed:
             new_status = "Done"
-        elif lot["status"] == "Done":
+        elif prev_status == "Done":
             new_status = "Running"
         conn.execute(
-            "UPDATE lot SET current_step = ?, status = ? WHERE lot_id = ?",
-            (step_code, new_status, lot_id),
+            "UPDATE lot SET current_step = ?, status = ?, wafer_qty = ? WHERE lot_id = ?",
+            (step_code, new_status, out_qty, lot_id),
         )
+
+        # Auto-create a 실적(production_result) when a lot first completes the route.
+        if is_last and passed and prev_status != "Done":
+            cum_scrap = conn.execute(
+                "SELECT COALESCE(SUM(scrap_qty), 0) FROM process_history WHERE lot_id = ?",
+                (lot_id,),
+            ).fetchone()[0]
+            start_qty = lot["start_qty"] or (out_qty + cum_scrap)
+            y = round(out_qty / start_qty * 100, 2) if start_qty else 0.0
+            conn.execute(
+                """INSERT INTO production_result
+                       (result_date, line, eqp_id, product, good_qty, scrap_qty, yield_pct)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (now[:10], eqp_id or "FAB", eqp_id, lot["product"],
+                 out_qty, int(cum_scrap), y),
+            )
+
         row = conn.execute(
             """SELECT h.id, h.lot_id, h.step_code, ps.step_name,
-                      h.eqp_id, h.in_time, h.out_time, h.operator, h.result
+                      h.eqp_id, h.in_qty, h.out_qty, h.scrap_qty, h.defect_code,
+                      h.in_time, h.out_time, h.operator, h.result
                FROM process_history h
                LEFT JOIN process_step ps ON ps.step_code = h.step_code
                WHERE h.id = ?""",
@@ -405,9 +449,13 @@ def get_lot(lot_id: str) -> Optional[dict[str, Any]]:
         if row is None:
             return None
         lot = dict(row)
+        start_qty = lot.get("start_qty") or 0
+        wafer_qty = lot.get("wafer_qty") or 0
+        lot["cumulative_yield"] = round(wafer_qty / start_qty * 100, 2) if start_qty else 0.0
         hist = conn.execute(
             """SELECT h.id, h.lot_id, h.step_code, ps.step_name,
-                      h.eqp_id, h.in_time, h.out_time, h.operator, h.result
+                      h.eqp_id, h.in_qty, h.out_qty, h.scrap_qty, h.defect_code,
+                      h.in_time, h.out_time, h.operator, h.result
                FROM process_history h
                LEFT JOIN process_step ps ON ps.step_code = h.step_code
                WHERE h.lot_id = ?
@@ -482,3 +530,61 @@ def counts() -> dict[str, int]:
                       "inventory", "production_result", "equipment"):
             out[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
     return out
+
+
+def get_dashboard_summary() -> dict[str, Any]:
+    """One-page overview: KPIs + section summaries for the web dashboard."""
+    with get_conn() as conn:
+        def scalar(sql: str, params: Iterable[Any] = ()) -> Any:
+            return conn.execute(sql, tuple(params)).fetchone()[0]
+
+        total_lots = scalar("SELECT COUNT(*) FROM lot")
+        running_lots = scalar("SELECT COUNT(*) FROM lot WHERE status = 'Running'")
+        done_lots = scalar("SELECT COUNT(*) FROM lot WHERE status = 'Done'")
+        total_start = scalar("SELECT COALESCE(SUM(start_qty), 0) FROM lot")
+        current_wafers = scalar("SELECT COALESCE(SUM(wafer_qty), 0) FROM lot")
+        wip_wafers = scalar(
+            "SELECT COALESCE(SUM(wafer_qty), 0) FROM lot WHERE status = 'Running'"
+        )
+        total_in = scalar("SELECT COALESCE(SUM(in_qty), 0) FROM process_history")
+        total_scrap = scalar("SELECT COALESCE(SUM(scrap_qty), 0) FROM process_history")
+        n_results = scalar("SELECT COUNT(*) FROM production_result")
+
+        cumulative_yield = round(current_wafers / total_start * 100, 2) if total_start else 0.0
+        defect_rate = round(total_scrap / total_in * 100, 2) if total_in else 0.0
+
+        top_defects = _rows(conn.execute(
+            """SELECT defect_code, SUM(scrap_qty) AS scrap_qty, COUNT(*) AS events
+               FROM process_history
+               WHERE defect_code IS NOT NULL AND defect_code != '' AND scrap_qty > 0
+               GROUP BY defect_code
+               ORDER BY scrap_qty DESC
+               LIMIT 5"""
+        ))
+        top_scrap_steps = _rows(conn.execute(
+            """SELECT h.step_code, ps.step_name, SUM(h.scrap_qty) AS scrap_qty
+               FROM process_history h
+               LEFT JOIN process_step ps ON ps.step_code = h.step_code
+               WHERE h.scrap_qty > 0
+               GROUP BY h.step_code, ps.step_name
+               ORDER BY scrap_qty DESC
+               LIMIT 5"""
+        ))
+
+    return {
+        "total_lots": total_lots,
+        "running_lots": running_lots,
+        "done_lots": done_lots,
+        "total_start_wafers": total_start,
+        "current_wafers": current_wafers,
+        "wip_wafers": wip_wafers,
+        "total_scrap": total_scrap,
+        "cumulative_yield_pct": cumulative_yield,
+        "defect_rate_pct": defect_rate,
+        "result_count": n_results,
+        "recent_results": list_production_results(limit=5),
+        "wip_by_step": get_wip(),
+        "equipment": list_equipment(),
+        "top_defects": top_defects,
+        "top_scrap_steps": top_scrap_steps,
+    }

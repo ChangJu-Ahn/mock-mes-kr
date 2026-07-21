@@ -37,7 +37,7 @@
   </section>
   <section class="data-panel">
     <div class="panel-header"><h2>최근 공정실적 Recent Results</h2><span class="panel-meta">{{ results|length }} records</span></div>
-    <div class="table-wrap"><table><thead><tr><th>ID</th><th>로트</th><th>공정</th><th class="numeric">투입</th><th class="numeric">출고</th><th class="numeric">스크랩</th><th>불량 코드</th><th>결과</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>로트</th><th>공정</th><th class="numeric">투입</th><th class="numeric">산출</th><th class="numeric">스크랩</th><th>불량 코드</th><th>결과</th></tr></thead><tbody>
     {% for r in results %}<tr>
       <td class="mono">{{ r.id }}</td>
       <td><a class="mono" href="/lots/{{ r.lot_id }}">{{ r.lot_id }}</a></td>

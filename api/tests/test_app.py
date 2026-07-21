@@ -250,6 +250,26 @@ class WebConsoleTests(unittest.TestCase):
             self.assertIn('<th class="numeric">로트 수</th>', page)
             self.assertIn('<th class="numeric">웨이퍼 수</th>', page)
 
+    def test_process_result_columns_use_consistent_clear_labels(self):
+        lot_id = self.db.list_lot_ids()[0]
+        dashboard = self.client.get("/").text
+        process = self.client.get("/process").text
+        detail = self.client.get(f"/lots/{lot_id}").text
+        # out_qty -> 산출, scrap_qty -> 스크랩, consistently across every screen
+        for page in (dashboard, process, detail):
+            self.assertIn('<th class="numeric">산출</th>', page)
+            self.assertIn('<th class="numeric">스크랩</th>', page)
+        # scrap_qty must not read as a defect count next to the 불량 코드 column
+        self.assertNotIn('<th class="numeric">불량</th>', dashboard)
+        # out_qty must not read as a shipment ("출고") mid-process
+        self.assertNotIn('<th class="numeric">출고</th>', process)
+        self.assertNotIn('<th class="numeric">출고</th>', detail)
+
+    def test_lots_list_labels_start_qty_with_unit(self):
+        lots = self.client.get("/lots").text
+        self.assertIn('<th class="numeric">투입 수량</th>', lots)
+        self.assertIn('<th class="numeric">현재 수량</th>', lots)
+
     def test_production_pages_preserve_form_contracts(self):
         lots = self.client.get("/lots").text
         for token in (

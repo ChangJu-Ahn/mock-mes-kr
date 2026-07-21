@@ -23,7 +23,7 @@
   </div>
   <section class="data-panel">
     <div class="panel-header"><h2>공정 이력 Process History</h2><span class="panel-meta">{{ lot.history|length }} moves</span></div>
-    <div class="table-wrap"><table><thead><tr><th>ID</th><th>공정</th><th>설비</th><th class="numeric">투입</th><th class="numeric">출고</th><th class="numeric">스크랩</th><th>불량 코드</th><th>결과</th><th>완료 시각</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>공정</th><th>설비</th><th class="numeric">투입</th><th class="numeric">산출</th><th class="numeric">스크랩</th><th>불량 코드</th><th>결과</th><th>완료 시각</th></tr></thead><tbody>
     {% for h in lot.history %}<tr>
       <td class="mono">{{ h.id }}</td>
       <td><strong>{{ h.step_code }}</strong> <span class="muted">{{ h.step_name or "" }}</span></td>

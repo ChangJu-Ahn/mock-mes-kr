@@ -183,11 +183,11 @@ Streamable HTTP (`stateless_http=True`). Seven tools:
 # SEMI + FIN inventory
 curl -H "X-API-Key: changjuahn" "https://<fqdn>/api/product-inventory"
 
-# Run packaging: consume 100 SEMI wafers → FIN
+# Run packaging: consume 10 SEMI wafers → FIN
 curl -X POST "https://<fqdn>/api/packaging" \
   -H "X-API-Key: changjuahn" \
   -H "Content-Type: application/json" \
-  -d '{"product_code": "LX9-AP-5NM", "in_qty": 100}'
+  -d '{"product_code": "LX9", "in_qty": 10}'
 ```
 
 ### Python — MCP
@@ -205,7 +205,7 @@ async def main():
             await s.initialize()
             # Start a new FAB lot
             lot = await s.call_tool("start_lot",
-                                    {"product_code": "LX9-AP-5NM", "start_qty": 25})
+                                    {"product_code": "LX9", "start_qty": 25})
             print(lot)
             # Check WIP grouped by step
             wip = await s.call_tool("get_wip", {})

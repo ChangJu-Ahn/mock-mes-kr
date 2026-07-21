@@ -1,4 +1,4 @@
-"""SQLite schema, connection management, and data-access API for the mock MES.
+"""SQLite schema, connection management, and data-access foundation for the mock MES.
 
 Design notes
 ------------
@@ -10,14 +10,9 @@ Design notes
 * Rows are returned as plain ``dict`` objects so both FastAPI (Pydantic/JSON)
   and the MCP server can serialize them trivially.
 
-The 7 MES functions map onto these helpers:
-    실적 입력  -> add_production_result
-    실적 조회  -> list_production_results
-    재고 조회  -> list_inventory
-    재공 조회  -> get_wip                (derived from lot.current_step)
-    공정 입력  -> add_process_move       (writes process_history, advances lot)
-    공정 조회  -> get_process_route / get_process_history
-    로트 조회  -> get_lot / list_lots
+9-table schema: product, process_step, equipment, material, bom,
+                lot, process_result, product_inventory, product_result.
+Data-access functions are added incrementally in later tasks.
 """
 
 from __future__ import annotations
@@ -41,34 +36,60 @@ def get_db_path() -> str:
 # --------------------------------------------------------------------------- #
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS product (
+    product_code TEXT PRIMARY KEY,
+    product_name TEXT NOT NULL,
+    tech_node    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS process_step (
-    seq        INTEGER NOT NULL,
-    step_code  TEXT PRIMARY KEY,
-    step_name  TEXT NOT NULL,
-    operation  TEXT,
-    eqp_type   TEXT
+    seq       INTEGER NOT NULL,
+    step_code TEXT PRIMARY KEY,
+    step_name TEXT NOT NULL,
+    operation TEXT,
+    eqp_type  TEXT,
+    stage     TEXT NOT NULL DEFAULT 'FAB'
 );
 
 CREATE TABLE IF NOT EXISTS equipment (
-    eqp_id    TEXT PRIMARY KEY,
-    eqp_name  TEXT NOT NULL,
-    type      TEXT,
-    status    TEXT
+    eqp_id   TEXT PRIMARY KEY,
+    eqp_name TEXT NOT NULL,
+    type     TEXT,
+    status   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS material (
+    material_code TEXT PRIMARY KEY,
+    material_name TEXT NOT NULL,
+    category      TEXT,
+    qty           REAL NOT NULL DEFAULT 0,
+    uom           TEXT,
+    location      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS bom (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_code  TEXT NOT NULL,
+    step_code     TEXT NOT NULL,
+    material_code TEXT NOT NULL,
+    qty_per_wafer REAL NOT NULL DEFAULT 0,
+    uom           TEXT,
+    UNIQUE (product_code, step_code, material_code)
 );
 
 CREATE TABLE IF NOT EXISTS lot (
-    lot_id        TEXT PRIMARY KEY,
-    product       TEXT NOT NULL,
-    tech_node     TEXT,
-    start_qty     INTEGER,
-    wafer_qty     INTEGER,
-    priority      TEXT,
-    current_step  TEXT,
-    status        TEXT,
-    start_date    TEXT
+    lot_id       TEXT PRIMARY KEY,
+    product_code TEXT NOT NULL,
+    tech_node    TEXT,
+    start_qty    INTEGER,
+    wafer_qty    INTEGER,
+    priority     TEXT,
+    current_step TEXT,
+    status       TEXT,
+    start_date   TEXT
 );
 
-CREATE TABLE IF NOT EXISTS process_history (
+CREATE TABLE IF NOT EXISTS process_result (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     lot_id      TEXT NOT NULL,
     step_code   TEXT NOT NULL,
@@ -83,40 +104,46 @@ CREATE TABLE IF NOT EXISTS process_history (
     result      TEXT
 );
 
-CREATE TABLE IF NOT EXISTS inventory (
-    item_code  TEXT PRIMARY KEY,
-    item_name  TEXT NOT NULL,
-    category   TEXT,
-    qty        REAL,
-    uom        TEXT,
-    location   TEXT
+CREATE TABLE IF NOT EXISTS product_inventory (
+    product_code TEXT NOT NULL,
+    item_type    TEXT NOT NULL,
+    qty          REAL NOT NULL DEFAULT 0,
+    uom          TEXT,
+    location     TEXT,
+    PRIMARY KEY (product_code, item_type)
 );
 
-CREATE TABLE IF NOT EXISTS production_result (
+CREATE TABLE IF NOT EXISTS product_result (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     result_date  TEXT NOT NULL,
-    line         TEXT,
-    eqp_id       TEXT,
-    product      TEXT,
+    lot_id       TEXT,
+    product_code TEXT NOT NULL,
+    item_type    TEXT NOT NULL,
     good_qty     INTEGER,
     scrap_qty    INTEGER,
-    yield_pct    REAL
+    yield_pct    REAL,
+    source       TEXT,
+    line         TEXT,
+    eqp_id       TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_hist_lot   ON process_history(lot_id);
-CREATE INDEX IF NOT EXISTS idx_hist_step  ON process_history(step_code);
-CREATE INDEX IF NOT EXISTS idx_prod_date  ON production_result(result_date);
-CREATE INDEX IF NOT EXISTS idx_prod_prod  ON production_result(product);
-CREATE INDEX IF NOT EXISTS idx_lot_step   ON lot(current_step);
+CREATE INDEX IF NOT EXISTS idx_pr_lot   ON process_result (lot_id);
+CREATE INDEX IF NOT EXISTS idx_pr_step  ON process_result (step_code);
+CREATE INDEX IF NOT EXISTS idx_bom_ps   ON bom (product_code, step_code);
+CREATE INDEX IF NOT EXISTS idx_lot_step ON lot (current_step);
+CREATE INDEX IF NOT EXISTS idx_prd_res  ON product_result (product_code, item_type);
 """
 
 TABLES = (
-    "process_history",
-    "production_result",
-    "inventory",
+    "product_result",
+    "process_result",
+    "product_inventory",
+    "bom",
     "lot",
+    "material",
     "equipment",
     "process_step",
+    "product",
 )
 
 
@@ -177,550 +204,9 @@ def reset_db() -> None:
             pass
 
 
-# --------------------------------------------------------------------------- #
-# 실적 (production_result)
-# --------------------------------------------------------------------------- #
-
-def add_production_result(
-    product: str,
-    good_qty: int,
-    scrap_qty: int = 0,
-    result_date: Optional[str] = None,
-    line: Optional[str] = None,
-    eqp_id: Optional[str] = None,
-    yield_pct: Optional[float] = None,
-) -> dict[str, Any]:
-    """실적 입력: insert one production result and return the stored row.
-
-    ``yield_pct`` is auto-computed as good/(good+scrap)*100 when omitted.
-    """
-    good_qty = int(good_qty)
-    scrap_qty = int(scrap_qty or 0)
-    if result_date is None:
-        result_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if yield_pct is None:
-        total = good_qty + scrap_qty
-        yield_pct = round(good_qty / total * 100, 2) if total > 0 else 0.0
-    with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO production_result
-                   (result_date, line, eqp_id, product, good_qty, scrap_qty, yield_pct)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (result_date, line, eqp_id, product, good_qty, scrap_qty, yield_pct),
-        )
-        new_id = cur.lastrowid
-        row = conn.execute(
-            "SELECT * FROM production_result WHERE id = ?", (new_id,)
-        ).fetchone()
-    return dict(row)
-
-
-def list_production_results(
-    product: Optional[str] = None,
-    line: Optional[str] = None,
-    eqp_id: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    min_yield: Optional[float] = None,
-    sort: str = "date",
-    order: str = "desc",
-    limit: int = 100,
-) -> list[dict[str, Any]]:
-    """실적 조회: list production results with rich filters and sorting."""
-    clauses: list[str] = []
-    params: list[Any] = []
-    if product:
-        clauses.append("product = ?")
-        params.append(product)
-    if line:
-        clauses.append("line = ?")
-        params.append(line)
-    if eqp_id:
-        clauses.append("eqp_id = ?")
-        params.append(eqp_id)
-    if date_from:
-        clauses.append("result_date >= ?")
-        params.append(date_from)
-    if date_to:
-        clauses.append("result_date <= ?")
-        params.append(date_to)
-    if min_yield is not None:
-        clauses.append("yield_pct >= ?")
-        params.append(float(min_yield))
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    sort_col = {"date": "result_date", "yield": "yield_pct", "good": "good_qty",
-                "scrap": "scrap_qty"}.get(sort, "result_date")
-    direction = "ASC" if str(order).lower() == "asc" else "DESC"
-    params.append(int(limit))
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"""SELECT * FROM production_result
-                {where}
-                ORDER BY {sort_col} {direction}, id DESC
-                LIMIT ?""",
-            params,
-        )
-        return _rows(cur)
-
-
-def get_production_result(result_id: int) -> Optional[dict[str, Any]]:
-    """실적 조회(단건): one production result by id, or None."""
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM production_result WHERE id = ?", (int(result_id),)
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def production_summary(group_by: str = "product") -> list[dict[str, Any]]:
-    """실적 집계: totals + average yield grouped by product or line."""
-    column = {"product": "product", "line": "line"}.get(group_by)
-    if column is None:
-        raise ValueError(f"group_by must be 'product' or 'line', got {group_by!r}")
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"""SELECT {column} AS {group_by},
-                       COUNT(*)                       AS records,
-                       COALESCE(SUM(good_qty), 0)     AS good_total,
-                       COALESCE(SUM(scrap_qty), 0)    AS scrap_total,
-                       ROUND(AVG(yield_pct), 2)       AS avg_yield
-                FROM production_result
-                GROUP BY {column}
-                ORDER BY good_total DESC"""
-        )
-        return _rows(cur)
-
-
-# --------------------------------------------------------------------------- #
-# 재고 (inventory)
-# --------------------------------------------------------------------------- #
-
-def list_inventory(
-    category: Optional[str] = None,
-    location: Optional[str] = None,
-    q: Optional[str] = None,
-    min_qty: Optional[float] = None,
-    max_qty: Optional[float] = None,
-) -> list[dict[str, Any]]:
-    """재고 조회: list inventory items with category/location/search/qty filters."""
-    clauses: list[str] = []
-    params: list[Any] = []
-    if category:
-        clauses.append("category = ?")
-        params.append(category)
-    if location:
-        clauses.append("location = ?")
-        params.append(location)
-    if q:
-        clauses.append("(LOWER(item_code) LIKE ? OR LOWER(item_name) LIKE ?)")
-        like = f"%{q.lower()}%"
-        params.extend([like, like])
-    if min_qty is not None:
-        clauses.append("qty >= ?")
-        params.append(float(min_qty))
-    if max_qty is not None:
-        clauses.append("qty <= ?")
-        params.append(float(max_qty))
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"SELECT * FROM inventory {where} ORDER BY category, item_code", params
-        )
-        return _rows(cur)
-
-
-def get_inventory_item(item_code: str) -> Optional[dict[str, Any]]:
-    """재고 조회(단건): one inventory item by code, or None."""
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM inventory WHERE item_code = ?", (item_code,)
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def inventory_facets() -> dict[str, list[str]]:
-    """Distinct categories and locations, so callers can discover filter values."""
-    with get_conn() as conn:
-        cats = [r[0] for r in conn.execute(
-            "SELECT DISTINCT category FROM inventory ORDER BY category").fetchall()]
-        locs = [r[0] for r in conn.execute(
-            "SELECT DISTINCT location FROM inventory ORDER BY location").fetchall()]
-    return {"categories": cats, "locations": locs}
-
-
-# --------------------------------------------------------------------------- #
-# 재공 / WIP (derived from lot.current_step)
-# --------------------------------------------------------------------------- #
-
-def get_wip(step_code: Optional[str] = None) -> list[dict[str, Any]]:
-    """재공 조회: WIP grouped by current process step (running lots only)."""
-    clauses = ["1=1"]
-    params: list[Any] = []
-    if step_code:
-        clauses.append("ps.step_code = ?")
-        params.append(step_code)
-    where = " AND ".join(clauses)
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"""SELECT ps.seq              AS seq,
-                      ps.step_code        AS step_code,
-                      ps.step_name        AS step_name,
-                      COUNT(l.lot_id)     AS lot_count,
-                      COALESCE(SUM(l.wafer_qty), 0) AS wafer_qty
-               FROM process_step ps
-               LEFT JOIN lot l
-                      ON l.current_step = ps.step_code
-                     AND l.status = 'Running'
-               WHERE {where}
-               GROUP BY ps.seq, ps.step_code, ps.step_name
-               ORDER BY ps.seq""",
-            params,
-        )
-        return _rows(cur)
-
-
-# --------------------------------------------------------------------------- #
-# 공정 (process_step route + process_history)
-# --------------------------------------------------------------------------- #
-
-def get_process_route(
-    step_code: Optional[str] = None,
-    eqp_type: Optional[str] = None,
-) -> list[dict[str, Any]]:
-    """공정 조회 (route): the ordered process route, optionally filtered."""
-    clauses: list[str] = []
-    params: list[Any] = []
-    if step_code:
-        clauses.append("step_code = ?")
-        params.append(step_code)
-    if eqp_type:
-        clauses.append("eqp_type = ?")
-        params.append(eqp_type)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    with get_conn() as conn:
-        cur = conn.execute(f"SELECT * FROM process_step {where} ORDER BY seq", params)
-        return _rows(cur)
-
-
-def get_process_history(
-    lot_id: Optional[str] = None,
-    step_code: Optional[str] = None,
-    result: Optional[str] = None,
-    operator: Optional[str] = None,
-    defect_code: Optional[str] = None,
-    has_scrap: Optional[bool] = None,
-    limit: int = 200,
-) -> list[dict[str, Any]]:
-    """공정 조회 (history): process move history with optional filters."""
-    clauses: list[str] = []
-    params: list[Any] = []
-    if lot_id:
-        clauses.append("h.lot_id = ?")
-        params.append(lot_id)
-    if step_code:
-        clauses.append("h.step_code = ?")
-        params.append(step_code)
-    if result:
-        clauses.append("h.result = ?")
-        params.append(result)
-    if operator:
-        clauses.append("h.operator = ?")
-        params.append(operator)
-    if defect_code:
-        clauses.append("h.defect_code = ?")
-        params.append(defect_code)
-    if has_scrap is True:
-        clauses.append("COALESCE(h.scrap_qty, 0) > 0")
-    elif has_scrap is False:
-        clauses.append("COALESCE(h.scrap_qty, 0) = 0")
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.append(int(limit))
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"""SELECT h.id, h.lot_id, h.step_code, ps.step_name,
-                       h.eqp_id, h.in_qty, h.out_qty, h.scrap_qty, h.defect_code,
-                       h.in_time, h.out_time, h.operator, h.result
-                FROM process_history h
-                LEFT JOIN process_step ps ON ps.step_code = h.step_code
-                {where}
-                ORDER BY h.id DESC
-                LIMIT ?""",
-            params,
-        )
-        return _rows(cur)
-
-
-def add_process_move(
-    lot_id: str,
-    step_code: str,
-    eqp_id: Optional[str] = None,
-    in_qty: Optional[int] = None,
-    scrap_qty: int = 0,
-    defect_code: Optional[str] = None,
-    operator: Optional[str] = None,
-    result: str = "Pass",
-    in_time: Optional[str] = None,
-    out_time: Optional[str] = None,
-) -> dict[str, Any]:
-    """공정 입력: record a process move (with wafer quantities) and advance the lot.
-
-    Wafer flow: ``in_qty`` defaults to the lot's current ``wafer_qty``; ``out_qty``
-    = ``in_qty - scrap_qty`` is carried forward as the lot's new ``wafer_qty``.
-    When the final route step passes, the lot is closed (status ``Done``) and one
-    ``production_result`` (실적) row is auto-created (good = final out, scrap =
-    cumulative lot scrap). Raises ``ValueError`` on unknown lot/step or bad qty.
-    """
-    now = _now_iso()
-    if in_time is None:
-        in_time = now
-    if out_time is None:
-        out_time = now
-    with get_conn() as conn:
-        lot = conn.execute(
-            "SELECT * FROM lot WHERE lot_id = ?", (lot_id,)
-        ).fetchone()
-        if lot is None:
-            raise ValueError(f"unknown lot_id: {lot_id!r}")
-        step = conn.execute(
-            "SELECT * FROM process_step WHERE step_code = ?", (step_code,)
-        ).fetchone()
-        if step is None:
-            raise ValueError(f"unknown step_code: {step_code!r}")
-
-        if in_qty is None:
-            in_qty = lot["wafer_qty"] if lot["wafer_qty"] is not None else (lot["start_qty"] or 0)
-        in_qty = int(in_qty)
-        scrap_qty = int(scrap_qty or 0)
-        if in_qty < 0:
-            raise ValueError(f"in_qty must be >= 0, got {in_qty}")
-        if scrap_qty < 0 or scrap_qty > in_qty:
-            raise ValueError(f"scrap_qty must be between 0 and in_qty ({in_qty}), got {scrap_qty}")
-        out_qty = in_qty - scrap_qty
-
-        cur = conn.execute(
-            """INSERT INTO process_history
-                   (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty,
-                    defect_code, in_time, out_time, operator, result)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (lot_id, step_code, eqp_id, in_qty, out_qty, scrap_qty,
-             defect_code, in_time, out_time, operator, result),
-        )
-        new_id = cur.lastrowid
-
-        # Advance the lot to this step and carry the good wafers forward.
-        last_seq = conn.execute("SELECT MAX(seq) FROM process_step").fetchone()[0]
-        prev_status = lot["status"]
-        new_status = prev_status
-        passed = result.lower() in ("pass", "ok", "good")
-        is_last = step["seq"] == last_seq
-        if is_last and passed:
-            new_status = "Done"
-        elif prev_status == "Done":
-            new_status = "Running"
-        conn.execute(
-            "UPDATE lot SET current_step = ?, status = ?, wafer_qty = ? WHERE lot_id = ?",
-            (step_code, new_status, out_qty, lot_id),
-        )
-
-        # Auto-create a 실적(production_result) when a lot first completes the route.
-        if is_last and passed and prev_status != "Done":
-            cum_scrap = conn.execute(
-                "SELECT COALESCE(SUM(scrap_qty), 0) FROM process_history WHERE lot_id = ?",
-                (lot_id,),
-            ).fetchone()[0]
-            start_qty = lot["start_qty"] or (out_qty + cum_scrap)
-            y = round(out_qty / start_qty * 100, 2) if start_qty else 0.0
-            conn.execute(
-                """INSERT INTO production_result
-                       (result_date, line, eqp_id, product, good_qty, scrap_qty, yield_pct)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (now[:10], eqp_id or "FAB", eqp_id, lot["product"],
-                 out_qty, int(cum_scrap), y),
-            )
-
-        row = conn.execute(
-            """SELECT h.id, h.lot_id, h.step_code, ps.step_name,
-                      h.eqp_id, h.in_qty, h.out_qty, h.scrap_qty, h.defect_code,
-                      h.in_time, h.out_time, h.operator, h.result
-               FROM process_history h
-               LEFT JOIN process_step ps ON ps.step_code = h.step_code
-               WHERE h.id = ?""",
-            (new_id,),
-        ).fetchone()
-    return dict(row)
-
-
-# --------------------------------------------------------------------------- #
-# 로트 (lot)
-# --------------------------------------------------------------------------- #
-
-def get_lot(lot_id: str) -> Optional[dict[str, Any]]:
-    """로트 조회: one lot with its current step name and full move history."""
-    with get_conn() as conn:
-        row = conn.execute(
-            """SELECT l.*, ps.step_name AS current_step_name
-               FROM lot l
-               LEFT JOIN process_step ps ON ps.step_code = l.current_step
-               WHERE l.lot_id = ?""",
-            (lot_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        lot = dict(row)
-        start_qty = lot.get("start_qty") or 0
-        wafer_qty = lot.get("wafer_qty") or 0
-        lot["cumulative_yield"] = round(wafer_qty / start_qty * 100, 2) if start_qty else 0.0
-        hist = conn.execute(
-            """SELECT h.id, h.lot_id, h.step_code, ps.step_name,
-                      h.eqp_id, h.in_qty, h.out_qty, h.scrap_qty, h.defect_code,
-                      h.in_time, h.out_time, h.operator, h.result
-               FROM process_history h
-               LEFT JOIN process_step ps ON ps.step_code = h.step_code
-               WHERE h.lot_id = ?
-               ORDER BY h.id""",
-            (lot_id,),
-        ).fetchall()
-        lot["history"] = [dict(h) for h in hist]
-    return lot
-
-
-def list_lots(
-    status: Optional[str] = None,
-    product: Optional[str] = None,
-    current_step: Optional[str] = None,
-    priority: Optional[str] = None,
-    tech_node: Optional[str] = None,
-    limit: int = 200,
-) -> list[dict[str, Any]]:
-    """로트 조회 (list): lots with optional status/product/step/priority filters."""
-    clauses: list[str] = []
-    params: list[Any] = []
-    if status:
-        clauses.append("l.status = ?")
-        params.append(status)
-    if product:
-        clauses.append("l.product = ?")
-        params.append(product)
-    if current_step:
-        clauses.append("l.current_step = ?")
-        params.append(current_step)
-    if priority:
-        clauses.append("l.priority = ?")
-        params.append(priority)
-    if tech_node:
-        clauses.append("l.tech_node = ?")
-        params.append(tech_node)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.append(int(limit))
-    with get_conn() as conn:
-        cur = conn.execute(
-            f"""SELECT l.*, ps.step_name AS current_step_name
-                FROM lot l
-                LEFT JOIN process_step ps ON ps.step_code = l.current_step
-                {where}
-                ORDER BY l.lot_id
-                LIMIT ?""",
-            params,
-        )
-        return _rows(cur)
-
-
-# --------------------------------------------------------------------------- #
-# Equipment + small helpers used by the web console forms
-# --------------------------------------------------------------------------- #
-
-def list_equipment() -> list[dict[str, Any]]:
-    with get_conn() as conn:
-        cur = conn.execute("SELECT * FROM equipment ORDER BY eqp_id")
-        return _rows(cur)
-
-
-def list_products() -> list[str]:
-    """Distinct product names currently present on lots (for form dropdowns)."""
-    with get_conn() as conn:
-        cur = conn.execute("SELECT DISTINCT product FROM lot ORDER BY product")
-        return [r["product"] for r in cur.fetchall()]
-
-
-def list_lot_ids() -> list[str]:
-    with get_conn() as conn:
-        cur = conn.execute("SELECT lot_id FROM lot ORDER BY lot_id")
-        return [r["lot_id"] for r in cur.fetchall()]
-
-
-def list_defect_codes() -> list[str]:
-    """Distinct defect codes seen in process history (for form suggestions)."""
-    with get_conn() as conn:
-        cur = conn.execute(
-            "SELECT DISTINCT defect_code FROM process_history "
-            "WHERE defect_code IS NOT NULL AND defect_code != '' ORDER BY defect_code"
-        )
-        return [r["defect_code"] for r in cur.fetchall()]
-
-
 def counts() -> dict[str, int]:
-    """Small dashboard summary: row counts per table."""
-    out: dict[str, int] = {}
+    """Row counts per table (for the seed summary + dashboard)."""
     with get_conn() as conn:
-        for table in ("lot", "process_step", "process_history",
-                      "inventory", "production_result", "equipment"):
-            out[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-    return out
+        return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in TABLES}
 
 
-def get_dashboard_summary() -> dict[str, Any]:
-    """One-page overview: KPIs + section summaries for the web dashboard."""
-    with get_conn() as conn:
-        def scalar(sql: str, params: Iterable[Any] = ()) -> Any:
-            return conn.execute(sql, tuple(params)).fetchone()[0]
-
-        total_lots = scalar("SELECT COUNT(*) FROM lot")
-        running_lots = scalar("SELECT COUNT(*) FROM lot WHERE status = 'Running'")
-        done_lots = scalar("SELECT COUNT(*) FROM lot WHERE status = 'Done'")
-        total_start = scalar("SELECT COALESCE(SUM(start_qty), 0) FROM lot")
-        current_wafers = scalar("SELECT COALESCE(SUM(wafer_qty), 0) FROM lot")
-        wip_wafers = scalar(
-            "SELECT COALESCE(SUM(wafer_qty), 0) FROM lot WHERE status = 'Running'"
-        )
-        total_in = scalar("SELECT COALESCE(SUM(in_qty), 0) FROM process_history")
-        total_scrap = scalar("SELECT COALESCE(SUM(scrap_qty), 0) FROM process_history")
-        n_results = scalar("SELECT COUNT(*) FROM production_result")
-
-        cumulative_yield = round(current_wafers / total_start * 100, 2) if total_start else 0.0
-        defect_rate = round(total_scrap / total_in * 100, 2) if total_in else 0.0
-
-        top_defects = _rows(conn.execute(
-            """SELECT defect_code, SUM(scrap_qty) AS scrap_qty, COUNT(*) AS events
-               FROM process_history
-               WHERE defect_code IS NOT NULL AND defect_code != '' AND scrap_qty > 0
-               GROUP BY defect_code
-               ORDER BY scrap_qty DESC
-               LIMIT 5"""
-        ))
-        top_scrap_steps = _rows(conn.execute(
-            """SELECT h.step_code, ps.step_name, SUM(h.scrap_qty) AS scrap_qty
-               FROM process_history h
-               LEFT JOIN process_step ps ON ps.step_code = h.step_code
-               WHERE h.scrap_qty > 0
-               GROUP BY h.step_code, ps.step_name
-               ORDER BY scrap_qty DESC
-               LIMIT 5"""
-        ))
-
-    return {
-        "total_lots": total_lots,
-        "running_lots": running_lots,
-        "done_lots": done_lots,
-        "total_start_wafers": total_start,
-        "current_wafers": current_wafers,
-        "wip_wafers": wip_wafers,
-        "total_scrap": total_scrap,
-        "cumulative_yield_pct": cumulative_yield,
-        "defect_rate_pct": defect_rate,
-        "result_count": n_results,
-        "recent_results": list_production_results(limit=5),
-        "wip_by_step": get_wip(),
-        "equipment": list_equipment(),
-        "top_defects": top_defects,
-        "top_scrap_steps": top_scrap_steps,
-    }

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Guide · Mock MES{% endblock %}
+{% block content %}
+<h1>사용법 & 공정 흐름 Guide</h1>
+
+<section class="panel">
+  <h2>이게 뭔가요? What is this?</h2>
+  <p>반도체 팹을 흉내 낸 <strong>목업 MES</strong>입니다. 하나의 SQLite DB를 세 가지 창구로 노출합니다:
+     사람용 <strong>웹 콘솔</strong>, 에이전트용 <strong>REST API</strong>, 에이전트용 <strong>MCP 서버</strong>.
+     콜드 스타트마다 데이터가 새로 시딩됩니다. 데모 전용이라 실제 보안은 없습니다.</p>
+</section>
+
+<section>
+  <h2>전체 흐름 Overall flow</h2>
+  <ol class="flow">
+    <li><strong>로트 투입 (Start lot)</strong> — 제품을 골라 웨이퍼 로트를 시작합니다. 첫 FAB 공정에서 Running.</li>
+    <li><strong>공정실적 (Process result) ×8</strong> — DIFF→PHOTO→ETCH→IMPL→CVD→CMP→METRO→TEST 순으로
+        이동. 각 이동은 BOM에 따라 <strong>자재를 차감</strong>하고, 불량(scrap)을 기록합니다.</li>
+    <li><strong>SEMI 자동 입고</strong> — 마지막 FAB 공정(TEST) Pass 시 로트가 Done이 되고
+        <strong>반제품(SEMI)</strong>이 제품 인벤토리에 자동 입고 + 제품실적(AUTO_FAB) 생성.</li>
+    <li><strong>패키징 (Packaging)</strong> — SEMI를 소비해 <strong>완제품(FIN)</strong>을 만듭니다.
+        PKG 공정 BOM 자재도 차감, 제품실적(AUTO_PACK) 생성.</li>
+    <li><strong>조회</strong> — 재공(WIP), 제품/자재 인벤토리, 제품/공정 실적, 로트 이력을 언제든 조회.</li>
+  </ol>
+  <p class="mono">Materials ──(BOM×wafers)──▶ Process results ──(TEST pass)──▶ SEMI ──(Packaging)──▶ FIN</p>
+</section>
+
+<section>
+  <h2>기능별 사용법 Functions</h2>
+  <table><thead><tr><th>기능</th><th>설명</th><th>창구</th></tr></thead><tbody>
+    <tr><td>로트 투입</td><td>새 웨이퍼 로트 시작</td><td>Web /lots · MCP start_lot</td></tr>
+    <tr><td>공정실적</td><td>공정 이동 + 자재 차감 + 불량</td><td>Web /process · MCP register_process_result</td></tr>
+    <tr><td>공정/로트 조회</td><td>route·이력·WIP·로트</td><td>Web · MCP get_lot/list_lots/get_process_route/list_process_results/get_wip</td></tr>
+    <tr><td>제품실적</td><td>SEMI/FIN 실적 (자동/수동)</td><td>Web /product-results · REST /api/product-results</td></tr>
+    <tr><td>패키징</td><td>SEMI→FIN 변환</td><td>Web /product-inventory · REST /api/packaging</td></tr>
+    <tr><td>제품 인벤토리</td><td>반제품/완제품 재고</td><td>Web · REST /api/product-inventory</td></tr>
+    <tr><td>자재 인벤토리</td><td>자재 재고·입고·공정별 소요</td><td>Web /materials · REST /api/materials(/by-step, /receipt)</td></tr>
+    <tr><td>BOM</td><td>제품·공정별 자재 소요량</td><td>Web /bom · REST /api/bom</td></tr>
+  </tbody></table>
+</section>
+
+<section class="panel">
+  <h2>에이전트 연결 Agent access</h2>
+  <p>REST와 MCP는 헤더 <code>X-API-Key: changjuahn</code>가 필요합니다. 웹 콘솔과 <code>/api/docs</code>는 공개입니다.</p>
+  <p><strong>REST</strong> (Product·Material·BOM):</p>
+  <pre>curl -H "X-API-Key: changjuahn" https://&lt;fqdn&gt;/api/product-inventory
+curl -X POST -H "X-API-Key: changjuahn" -H "Content-Type: application/json" \
+     -d '{"product_code":"LX9","in_qty":50}' https://&lt;fqdn&gt;/api/packaging</pre>
+  <p><strong>MCP</strong> (Process·Lot), streamable HTTP at <code>/mcp</code> with the same header. Tools:
+     <code>start_lot</code>, <code>register_process_result</code>, <code>get_lot</code>, <code>list_lots</code>,
+     <code>get_process_route</code>, <code>list_process_results</code>, <code>get_wip</code>.</p>
+  <p>Full REST reference: <a href="/api/docs">/api/docs</a>.</p>
+</section>
+{% endblock %}

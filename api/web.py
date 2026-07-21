@@ -278,3 +278,8 @@ def wip(request: Request):
 def equipment(request: Request):
     return templates.TemplateResponse(request, "equipment.html",
                                       _context(request, rows=db.list_equipment()))
+
+
+@router.get("/guide")
+def guide(request: Request):
+    return templates.TemplateResponse(request, "guide.html", _context(request))

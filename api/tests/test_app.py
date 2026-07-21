@@ -150,3 +150,8 @@ class WebConsoleTests(unittest.TestCase):
         bom_id = self.db.list_bom(product_code="LX9", step_code="METRO")[0]["id"]
         r2 = self.client.post(f"/bom/{bom_id}/delete", follow_redirects=False)
         self.assertEqual(r2.status_code, 303)
+
+    def test_guide_page(self):
+        r = self.client.get("/guide")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("공정", r.text)

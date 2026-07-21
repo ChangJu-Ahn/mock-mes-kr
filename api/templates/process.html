@@ -3,7 +3,8 @@
 {% block content %}
 <h1>Process / 공정</h1>
 <section class="panel">
-  <h2>Register process move</h2>
+  <h2>Register process move / 공정 입력</h2>
+  <p class="muted">Enter wafers in and scrap for this step. Out = In − Scrap; the lot's wafer qty carries forward. Leave In blank to use the lot's current qty. Passing the final step (TEST) auto-creates a 실적 record.</p>
   <form method="post" action="/process/moves" class="grid-form">
     <label>Lot
       <select name="lot_id" required>{% for lot_id in lot_ids %}<option value="{{ lot_id }}">{{ lot_id }}</option>{% endfor %}</select>
@@ -13,6 +14,12 @@
     </label>
     <label>Equipment
       <select name="eqp_id"><option value="">None</option>{% for eqp in equipment %}<option value="{{ eqp.eqp_id }}">{{ eqp.eqp_id }} - {{ eqp.eqp_name }}</option>{% endfor %}</select>
+    </label>
+    <label>In qty <input name="in_qty" type="number" min="0" placeholder="auto (lot qty)"></label>
+    <label>Scrap qty <input name="scrap_qty" type="number" min="0" value="0"></label>
+    <label>Defect code
+      <input name="defect_code" list="defect-codes" placeholder="e.g. Particle">
+      <datalist id="defect-codes">{% for code in defect_codes %}<option value="{{ code }}">{% endfor %}</datalist>
     </label>
     <label>Operator <input name="operator" placeholder="kim.js"></label>
     <label>Result
@@ -35,8 +42,8 @@
 <section class="panel">
   <h2>Recent history</h2>
   <table>
-    <thead><tr><th>ID</th><th>Lot</th><th>Step</th><th>Eqp</th><th>In</th><th>Out</th><th>Operator</th><th>Result</th></tr></thead>
-    <tbody>{% for row in history %}<tr><td>{{ row.id }}</td><td>{{ row.lot_id }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.in_time }}</td><td>{{ row.out_time }}</td><td>{{ row.operator or "" }}</td><td>{{ row.result }}</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>ID</th><th>Lot</th><th>Step</th><th>Eqp</th><th>In</th><th>Out</th><th>Scrap</th><th>Defect</th><th>Operator</th><th>Result</th></tr></thead>
+    <tbody>{% for row in history %}<tr><td>{{ row.id }}</td><td><a href="/lots/{{ row.lot_id }}">{{ row.lot_id }}</a></td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.in_qty if row.in_qty is not none else "" }}</td><td>{{ row.out_qty if row.out_qty is not none else "" }}</td><td class="{{ 'bad' if row.scrap_qty else '' }}">{{ row.scrap_qty or 0 }}</td><td>{{ row.defect_code or "" }}</td><td>{{ row.operator or "" }}</td><td>{{ row.result }}</td></tr>{% endfor %}</tbody>
   </table>
 </section>
 {% endblock %}

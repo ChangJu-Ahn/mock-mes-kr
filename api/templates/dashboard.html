@@ -1,32 +1,84 @@
 {% extends "base.html" %}
 {% block title %}Dashboard - Mock MES{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
+<h1>Dashboard / 대시보드</h1>
+<p class="muted">Mock semiconductor-fab MES — one-page overview of lots, wafers, yield, defects and 실적.</p>
+
 <section class="cards">
-  {% for name, value in counts.items() %}
-  <article class="card">
-    <span>{{ name }}</span>
-    <strong>{{ value }}</strong>
-  </article>
-  {% endfor %}
+  <article class="card"><span>Lots (total)</span><strong>{{ summary.total_lots }}</strong><small>{{ summary.running_lots }} running · {{ summary.done_lots }} done</small></article>
+  <article class="card"><span>Wafers (start → now)</span><strong>{{ summary.current_wafers }}</strong><small>of {{ summary.total_start_wafers }} started</small></article>
+  <article class="card"><span>WIP wafers</span><strong>{{ summary.wip_wafers }}</strong><small>in running lots</small></article>
+  <article class="card"><span>Cumulative yield</span><strong>{{ summary.cumulative_yield_pct }}%</strong><small>current / start wafers</small></article>
+  <article class="card"><span>Scrap (defects)</span><strong>{{ summary.total_scrap }}</strong><small>{{ summary.defect_rate_pct }}% defect rate</small></article>
+  <article class="card"><span>실적 records</span><strong>{{ summary.result_count }}</strong><small>production results</small></article>
 </section>
 
-<section class="panel">
-  <h2>Quick links</h2>
-  <div class="actions">
-    <a class="button" href="/production">실적 입력</a>
-    <a class="button" href="/process">공정 입력</a>
-    <a class="button" href="/api/docs">REST OpenAPI docs</a>
-  </div>
-</section>
+<div class="actions" style="margin-bottom:1.25rem">
+  <a class="button" href="/process">공정 입력 (register move)</a>
+  <a class="button" href="/production">실적 입력 (register result)</a>
+  <a class="button" href="/lots">로트 조회 (lots)</a>
+  <a class="button" href="/api/docs">REST API docs</a>
+</div>
+
+<div class="grid-2">
+  <section class="panel">
+    <h2>WIP by step / 재공</h2>
+    <table>
+      <thead><tr><th>Seq</th><th>Step</th><th>Lots</th><th>Wafers</th></tr></thead>
+      <tbody>
+        {% for row in summary.wip_by_step %}
+        <tr><td>{{ row.seq }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.lot_count }}</td><td>{{ row.wafer_qty }}</td></tr>
+        {% else %}<tr><td colspan="4" class="muted">No WIP</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>Top defects</h2>
+    <table>
+      <thead><tr><th>Defect</th><th>Scrap</th><th>Events</th></tr></thead>
+      <tbody>
+        {% for row in summary.top_defects %}
+        <tr><td>{{ row.defect_code }}</td><td class="bad">{{ row.scrap_qty }}</td><td>{{ row.events }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted">No defects recorded</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<div class="grid-2">
+  <section class="panel">
+    <h2>Scrap by step</h2>
+    <table>
+      <thead><tr><th>Step</th><th>Scrap</th></tr></thead>
+      <tbody>
+        {% for row in summary.top_scrap_steps %}
+        <tr><td>{{ row.step_code }} - {{ row.step_name }}</td><td class="bad">{{ row.scrap_qty }}</td></tr>
+        {% else %}<tr><td colspan="2" class="muted">No scrap</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel">
+    <h2>Equipment / 설비</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for row in summary.equipment %}
+        <tr><td>{{ row.eqp_id }}</td><td>{{ row.eqp_name }}</td><td>{{ row.type }}</td><td>{{ row.status }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
 
 <section class="panel">
-  <h2>WIP overview</h2>
+  <h2>Recent 실적 / production results</h2>
   <table>
-    <thead><tr><th>Seq</th><th>Step</th><th>Lots</th><th>Wafers</th></tr></thead>
+    <thead><tr><th>Date</th><th>Line</th><th>Eqp</th><th>Product</th><th>Good</th><th>Scrap</th><th>Yield %</th></tr></thead>
     <tbody>
-      {% for row in wip %}
-      <tr><td>{{ row.seq }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.lot_count }}</td><td>{{ row.wafer_qty }}</td></tr>
+      {% for row in summary.recent_results %}
+      <tr><td>{{ row.result_date }}</td><td>{{ row.line or "" }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.product }}</td><td>{{ row.good_qty }}</td><td class="bad">{{ row.scrap_qty }}</td><td>{{ row.yield_pct }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -45,3 +45,8 @@ button:hover, .button:hover { background: var(--accent-dark); text-decoration: n
 .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
 .detail-grid div { display: flex; flex-direction: column; gap: .25rem; }
 .detail-grid strong { color: var(--muted); font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.25rem; }
+.muted { color: var(--muted); }
+.bad { color: var(--bad); font-weight: 600; }
+.card small { display: block; color: var(--muted); font-size: .8rem; margin-top: .35rem; }
+.grid-2 table { min-width: 0; }

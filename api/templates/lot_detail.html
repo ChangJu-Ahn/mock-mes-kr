@@ -5,7 +5,8 @@
 <section class="panel detail-grid">
   <div><strong>Product</strong><span>{{ lot.product }}</span></div>
   <div><strong>Tech node</strong><span>{{ lot.tech_node }}</span></div>
-  <div><strong>Wafer qty</strong><span>{{ lot.wafer_qty }}</span></div>
+  <div><strong>Wafers</strong><span>{{ lot.wafer_qty }} / {{ lot.start_qty }} started</span></div>
+  <div><strong>Cumulative yield</strong><span>{{ lot.cumulative_yield }}%</span></div>
   <div><strong>Priority</strong><span>{{ lot.priority }}</span></div>
   <div><strong>Current step</strong><span>{{ lot.current_step }} - {{ lot.current_step_name }}</span></div>
   <div><strong>Status</strong><span>{{ lot.status }}</span></div>
@@ -13,12 +14,14 @@
 </section>
 
 <section class="panel">
-  <h2>Process history</h2>
+  <h2>Process history / 공정 이력</h2>
   <table>
-    <thead><tr><th>ID</th><th>Step</th><th>Eqp</th><th>In</th><th>Out</th><th>Operator</th><th>Result</th></tr></thead>
+    <thead><tr><th>ID</th><th>Step</th><th>Eqp</th><th>In</th><th>Out</th><th>Scrap</th><th>Defect</th><th>In time</th><th>Out time</th><th>Operator</th><th>Result</th></tr></thead>
     <tbody>
       {% for row in lot.history %}
-      <tr><td>{{ row.id }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.in_time }}</td><td>{{ row.out_time }}</td><td>{{ row.operator or "" }}</td><td>{{ row.result }}</td></tr>
+      <tr><td>{{ row.id }}</td><td>{{ row.step_code }} - {{ row.step_name }}</td><td>{{ row.eqp_id or "" }}</td><td>{{ row.in_qty if row.in_qty is not none else "" }}</td><td>{{ row.out_qty if row.out_qty is not none else "" }}</td><td class="{{ 'bad' if row.scrap_qty else '' }}">{{ row.scrap_qty or 0 }}</td><td>{{ row.defect_code or "" }}</td><td>{{ row.in_time }}</td><td>{{ row.out_time }}</td><td>{{ row.operator or "" }}</td><td>{{ row.result }}</td></tr>
+      {% else %}
+      <tr><td colspan="11" class="muted">No process moves yet</td></tr>
       {% endfor %}
     </tbody>
   </table>

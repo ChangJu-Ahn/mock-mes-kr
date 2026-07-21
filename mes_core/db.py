@@ -648,6 +648,16 @@ def list_lot_ids() -> list[str]:
         return [r["lot_id"] for r in cur.fetchall()]
 
 
+def list_defect_codes() -> list[str]:
+    """Distinct defect codes seen in process history (for form suggestions)."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "SELECT DISTINCT defect_code FROM process_history "
+            "WHERE defect_code IS NOT NULL AND defect_code != '' ORDER BY defect_code"
+        )
+        return [r["defect_code"] for r in cur.fetchall()]
+
+
 def counts() -> dict[str, int]:
     """Small dashboard summary: row counts per table."""
     out: dict[str, int] = {}

@@ -20,6 +20,11 @@ def _blank_to_none(value: str | None) -> str | None:
     return value or None
 
 
+def _int_or_none(value: str | None) -> int | None:
+    value = _blank_to_none(value)
+    return int(value) if value is not None else None
+
+
 def _context(request: Request, **extra: Any) -> dict[str, Any]:
     return {"request": request, **extra}
 
@@ -29,7 +34,7 @@ def dashboard(request: Request):
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        _context(request, counts=db.counts(), wip=db.get_wip()),
+        _context(request, summary=db.get_dashboard_summary()),
     )
 
 
@@ -111,6 +116,7 @@ def process(request: Request, message: str | None = None, error: str | None = No
             history=db.get_process_history(limit=100),
             lot_ids=db.list_lot_ids(),
             equipment=db.list_equipment(),
+            defect_codes=db.list_defect_codes(),
             message=message,
             error=error,
         ),
@@ -122,6 +128,9 @@ def process_move(
     lot_id: str = Form(...),
     step_code: str = Form(...),
     eqp_id: str | None = Form(None),
+    in_qty: str | None = Form(None),
+    scrap_qty: str | None = Form("0"),
+    defect_code: str | None = Form(None),
     operator: str | None = Form(None),
     result: str = Form("Pass"),
     in_time: str | None = Form(None),
@@ -132,6 +141,9 @@ def process_move(
             lot_id=lot_id,
             step_code=step_code,
             eqp_id=_blank_to_none(eqp_id),
+            in_qty=_int_or_none(in_qty),
+            scrap_qty=_int_or_none(scrap_qty) or 0,
+            defect_code=_blank_to_none(defect_code),
             operator=_blank_to_none(operator),
             result=result,
             in_time=_blank_to_none(in_time),

@@ -120,6 +120,37 @@ class MockMesApiTests(unittest.TestCase):
         self.assertEqual(wip.status_code, 200)
         self.assertTrue(all(row["step_code"] == "DIFF" for row in wip.json()))
 
+    def test_dashboard_shows_kpis_and_process_form_records_scrap(self):
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertIn("Cumulative yield", home.text)
+        self.assertIn("Top defects", home.text)
+
+        running = self.db.list_lots(status="Running", limit=1)[0]
+        lot_id = running["lot_id"]
+        before = self.db.get_lot(lot_id)["wafer_qty"]
+
+        response = self.client.post(
+            "/process/moves",
+            data={
+                "lot_id": lot_id, "step_code": "ETCH", "eqp_id": "EQP-ETCH01",
+                "in_qty": str(before), "scrap_qty": "3", "defect_code": "Particle",
+                "operator": "web-qa", "result": "Pass",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+
+        after = self.db.get_lot(lot_id)
+        self.assertEqual(after["wafer_qty"], before - 3)
+        latest = after["history"][-1]
+        self.assertEqual(latest["scrap_qty"], 3)
+        self.assertEqual(latest["defect_code"], "Particle")
+
+        detail = self.client.get(f"/lots/{lot_id}")
+        self.assertIn("Cumulative yield", detail.text)
+        self.assertIn("Particle", detail.text)
+
 
 if __name__ == "__main__":
     unittest.main()

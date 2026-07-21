@@ -401,5 +401,23 @@ class PackagingTests(DbTestBase):
         self.assertEqual(db.get_material("SUBSTR")["qty"], 0.0)   # floored at 0
 
 
+class DashboardTests(DbTestBase):
+    def setUp(self):
+        super().setUp()
+        self._seed_master()
+
+    def test_dashboard_summary_shape(self):
+        db = self.db
+        lot = db.start_lot("P1", 25)
+        db.register_process_result(lot["lot_id"], "PHOTO", scrap_qty=2, defect_code="Particle")
+        s = db.get_dashboard_summary()
+        self.assertEqual(s["lot_total"], 1)
+        self.assertEqual(s["wafers_started"], 25)
+        self.assertTrue(any(d["defect_code"] == "Particle" for d in s["top_defects"]))
+        self.assertIn("wip_by_step", s)
+        self.assertIn("equipment", s)
+        self.assertEqual(len(s["recent_process"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

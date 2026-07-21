@@ -733,3 +733,53 @@ def package(product_code, in_qty, scrap_qty=0, lot_id=None, eqp_id=None, operato
     out["shortages"] = shortages
     return out
 
+
+# --------------------------------------------------------------------------- #
+# Dashboard roll-up
+# --------------------------------------------------------------------------- #
+
+def get_dashboard_summary() -> dict[str, Any]:
+    with get_conn() as conn:
+        lot_total = conn.execute("SELECT COUNT(*) FROM lot").fetchone()[0]
+        lots_by_status = _rows(conn.execute(
+            "SELECT status, COUNT(*) AS n FROM lot GROUP BY status ORDER BY status"))
+        wafers_started = conn.execute("SELECT COALESCE(SUM(start_qty),0) FROM lot").fetchone()[0]
+        wafers_current = conn.execute(
+            "SELECT COALESCE(SUM(wafer_qty),0) FROM lot WHERE status != 'Done'").fetchone()[0]
+        semi_total = conn.execute(
+            "SELECT COALESCE(SUM(qty),0) FROM product_inventory WHERE item_type='SEMI'").fetchone()[0]
+        fin_total = conn.execute(
+            "SELECT COALESCE(SUM(qty),0) FROM product_inventory WHERE item_type='FIN'").fetchone()[0]
+        material_total_items = conn.execute("SELECT COUNT(*) FROM material").fetchone()[0]
+        low_materials = _rows(conn.execute(
+            "SELECT * FROM material WHERE qty < 20 ORDER BY qty LIMIT 8"))
+        top_defects = _rows(conn.execute(
+            "SELECT defect_code, COUNT(*) AS n FROM process_result "
+            "WHERE scrap_qty > 0 AND defect_code IS NOT NULL "
+            "GROUP BY defect_code ORDER BY n DESC LIMIT 5"))
+        recent_process = _rows(conn.execute(
+            "SELECT pr.*, ps.step_name FROM process_result pr "
+            "LEFT JOIN process_step ps ON ps.step_code = pr.step_code "
+            "ORDER BY pr.id DESC LIMIT 8"))
+        recent_products = _rows(conn.execute(
+            "SELECT pr.*, p.product_name FROM product_result pr "
+            "LEFT JOIN product p ON p.product_code = pr.product_code "
+            "ORDER BY pr.id DESC LIMIT 8"))
+        equipment = _rows(conn.execute("SELECT * FROM equipment ORDER BY eqp_id"))
+    return {
+        "lot_total": lot_total,
+        "lots_by_status": lots_by_status,
+        "wafers_started": wafers_started,
+        "wafers_current": wafers_current,
+        "wip_total_lots": sum(w["lot_count"] for w in get_wip()),
+        "wip_by_step": get_wip(),
+        "semi_total": semi_total,
+        "fin_total": fin_total,
+        "material_total_items": material_total_items,
+        "low_materials": low_materials,
+        "top_defects": top_defects,
+        "recent_process": recent_process,
+        "recent_products": recent_products,
+        "equipment": equipment,
+    }
+

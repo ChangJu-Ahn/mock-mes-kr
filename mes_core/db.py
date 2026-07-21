@@ -766,13 +766,14 @@ def get_dashboard_summary() -> dict[str, Any]:
             "LEFT JOIN product p ON p.product_code = pr.product_code "
             "ORDER BY pr.id DESC LIMIT 8"))
         equipment = _rows(conn.execute("SELECT * FROM equipment ORDER BY eqp_id"))
+    _wip = get_wip()
     return {
         "lot_total": lot_total,
         "lots_by_status": lots_by_status,
         "wafers_started": wafers_started,
         "wafers_current": wafers_current,
-        "wip_total_lots": sum(w["lot_count"] for w in get_wip()),
-        "wip_by_step": get_wip(),
+        "wip_total_lots": sum(w["lot_count"] for w in _wip),
+        "wip_by_step": _wip,
         "semi_total": semi_total,
         "fin_total": fin_total,
         "material_total_items": material_total_items,

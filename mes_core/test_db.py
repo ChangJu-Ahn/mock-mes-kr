@@ -417,6 +417,12 @@ class DashboardTests(DbTestBase):
         self.assertIn("wip_by_step", s)
         self.assertIn("equipment", s)
         self.assertEqual(len(s["recent_process"]), 1)
+        for key in ("lot_total", "lots_by_status", "wafers_started", "wafers_current",
+                    "wip_total_lots", "wip_by_step", "semi_total", "fin_total",
+                    "material_total_items", "low_materials", "top_defects",
+                    "recent_process", "recent_products", "equipment"):
+            self.assertIn(key, s)
+        self.assertEqual(s["wip_total_lots"], sum(w["lot_count"] for w in s["wip_by_step"]))
 
 
 if __name__ == "__main__":

@@ -612,8 +612,8 @@ def list_process_results(lot_id=None, step_code=None, result=None, operator=None
         return _rows(conn.execute(sql, args))
 
 
-def register_process_result(lot_id, step_code, eqp_id=None, in_qty=None, scrap_qty=0,
-                            defect_code=None, operator=None, result="Pass",
+def register_process_result(lot_id, step_code, in_qty=None, scrap_qty=0,
+                            defect_code=None, eqp_id=None, operator=None, result="Pass",
                             in_time=None, out_time=None):
     now = _now_iso()
     in_time = in_time or now

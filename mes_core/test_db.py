@@ -330,6 +330,10 @@ class ProcessResultTests(DbTestBase):
         self.assertEqual(db.get_material("PR-EUV")["qty"], 0.0)
         self.assertEqual(db.get_lot(self.lot["lot_id"])["current_step"], "PHOTO")
 
+    def test_unknown_lot_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.register_process_result("NO-SUCH-LOT", "PHOTO")
+
     def test_process_route_and_results_queries(self):
         db = self.db
         db.register_process_result(self.lot["lot_id"], "PHOTO", scrap_qty=3, defect_code="Particle")

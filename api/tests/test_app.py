@@ -244,6 +244,12 @@ class WebConsoleTests(unittest.TestCase):
         self.assertIn("설비 상태", equipment.text)
         self.assertIn('class="table-wrap"', equipment.text)
 
+    def test_wip_tables_label_aggregated_values_as_counts(self):
+        for path in ("/", "/wip"):
+            page = self.client.get(path).text
+            self.assertIn('<th class="numeric">로트 수</th>', page)
+            self.assertIn('<th class="numeric">웨이퍼 수</th>', page)
+
     def test_production_pages_preserve_form_contracts(self):
         lots = self.client.get("/lots").text
         for token in (

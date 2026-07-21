@@ -28,7 +28,7 @@
   <section class="data-panel">
     <div class="panel-header"><h2>단계별 재공 상세</h2><span class="panel-meta">WIP Detail</span></div>
     <div class="table-wrap">
-      <table><thead><tr><th>순서</th><th>공정 코드</th><th>공정명</th><th>단계</th><th class="numeric">로트</th><th class="numeric">웨이퍼</th></tr></thead><tbody>
+      <table><thead><tr><th>순서</th><th>공정 코드</th><th>공정명</th><th>단계</th><th class="numeric">로트 수</th><th class="numeric">웨이퍼 수</th></tr></thead><tbody>
       {% for r in rows %}<tr><td>{{ r.seq }}</td><td><strong>{{ r.step_code }}</strong></td><td>{{ r.step_name }}</td><td>{{ r.stage }}</td><td class="numeric">{{ r.lot_count }}</td><td class="numeric">{{ r.wafer_qty }}</td></tr>
       {% else %}<tr><td colspan="6" class="empty-state">현재 재공이 없습니다.</td></tr>{% endfor %}
       </tbody></table>

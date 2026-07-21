@@ -47,7 +47,7 @@
   <div class="grid-2">
     <section class="data-panel">
       <div class="panel-header"><h2>공정별 재공</h2><span class="panel-meta">{{ summary.wip_total_lots }} lots</span></div>
-      <div class="table-wrap"><table><thead><tr><th>순서</th><th>공정</th><th>단계</th><th class="numeric">로트</th><th class="numeric">웨이퍼</th></tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th>순서</th><th>공정</th><th>단계</th><th class="numeric">로트 수</th><th class="numeric">웨이퍼 수</th></tr></thead><tbody>
       {% for w in summary.wip_by_step %}<tr><td>{{ w.seq }}</td><td><strong>{{ w.step_code }}</strong> <span class="muted">{{ w.step_name }}</span></td><td>{{ w.stage }}</td><td class="numeric">{{ w.lot_count }}</td><td class="numeric">{{ w.wafer_qty }}</td></tr>
       {% else %}<tr><td colspan="5" class="empty-state">현재 재공이 없습니다.</td></tr>{% endfor %}
       </tbody></table></div>

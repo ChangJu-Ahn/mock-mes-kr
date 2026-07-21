@@ -343,5 +343,39 @@ class ProcessResultTests(DbTestBase):
         self.assertEqual(rows[0]["defect_code"], "Particle")
 
 
+class PackagingTests(DbTestBase):
+    def setUp(self):
+        super().setUp()
+        self._seed_master()
+        with self.db.get_conn() as conn:
+            conn.execute(
+                "INSERT INTO lot (lot_id, product_code, tech_node, start_qty, wafer_qty,"
+                " priority, current_step, status, start_date)"
+                " VALUES ('LOT1','P1','5nm',25,20,'Normal','TEST','Done','2026-01-01')"
+            )
+            db = self.db
+            db._add_product_inventory(conn, "P1", "SEMI", 20)  # 20 SEMI on hand
+
+    def test_package_consumes_semi_produces_fin(self):
+        db = self.db
+        res = db.package("P1", 15, scrap_qty=1, lot_id="LOT1")
+        self.assertEqual(res["item_type"], "FIN")
+        self.assertEqual(res["source"], "AUTO_PACK")
+        self.assertEqual(res["good_qty"], 14)
+        semi = db.list_product_inventory(product_code="P1", item_type="SEMI")[0]["qty"]
+        fin = db.list_product_inventory(product_code="P1", item_type="FIN")[0]["qty"]
+        self.assertEqual(semi, 5.0)   # 20 - 15
+        self.assertEqual(fin, 14.0)   # +14
+        self.assertEqual(db.get_material("SUBSTR")["qty"], 100.0 - 15.0)  # PKG BOM 1*15
+
+    def test_package_insufficient_semi_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.package("P1", 999)
+
+    def test_package_unknown_product_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.package("NOPE", 1)
+
+
 if __name__ == "__main__":
     unittest.main()

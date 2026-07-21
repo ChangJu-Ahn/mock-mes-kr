@@ -692,3 +692,44 @@ def register_process_result(lot_id, step_code, in_qty=None, scrap_qty=0,
     out["semi_receipt"] = semi_receipt
     return out
 
+
+# --------------------------------------------------------------------------- #
+# 패키징 (SEMI -> FIN)
+# --------------------------------------------------------------------------- #
+
+def package(product_code, in_qty, scrap_qty=0, lot_id=None, eqp_id=None, operator=None):
+    in_qty = int(in_qty)
+    scrap_qty = int(scrap_qty or 0)
+    if in_qty <= 0:
+        raise ValueError(f"in_qty must be > 0, got {in_qty}")
+    if scrap_qty < 0 or scrap_qty > in_qty:
+        raise ValueError(f"scrap_qty must be between 0 and in_qty ({in_qty}), got {scrap_qty}")
+    now = _now_iso()
+    with get_conn() as conn:
+        prod = conn.execute("SELECT * FROM product WHERE product_code = ?", (product_code,)).fetchone()
+        if prod is None:
+            raise ValueError(f"unknown product_code: {product_code!r}")
+        semi = conn.execute(
+            "SELECT qty FROM product_inventory WHERE product_code = ? AND item_type = 'SEMI'",
+            (product_code,),
+        ).fetchone()
+        semi_qty = semi["qty"] if semi else 0
+        if semi_qty < in_qty:
+            raise ValueError(
+                f"insufficient SEMI stock for {product_code}: need {in_qty}, have {semi_qty}"
+            )
+        out_qty = in_qty - scrap_qty
+        _add_product_inventory(conn, product_code, "SEMI", -in_qty)
+        _add_product_inventory(conn, product_code, "FIN", out_qty, uom="EA", location="WH-FG")
+        shortages = _consume_materials(conn, product_code, "PKG", in_qty)
+        y = round(out_qty / in_qty * 100, 2) if in_qty else 0.0
+        pr_id = _insert_product_result(
+            conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
+            item_type="FIN", good_qty=out_qty, scrap_qty=scrap_qty, yield_pct=y,
+            source="AUTO_PACK", eqp_id=eqp_id,
+        )
+        row = conn.execute("SELECT * FROM product_result WHERE id = ?", (pr_id,)).fetchone()
+    out = dict(row)
+    out["shortages"] = shortages
+    return out
+

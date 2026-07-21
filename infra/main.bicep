@@ -22,6 +22,9 @@ param appImage string = 'ghcr.io/changju-ahn/mock-mes-app:latest'
 @description('Caddy proxy image.')
 param proxyImage string = 'ghcr.io/changju-ahn/mock-mes-proxy:latest'
 
+@description('Revision suffix. Defaults to a deploy-time timestamp so each redeploy rolls a fresh revision that re-pulls the (mutable :latest) images.')
+param revisionSuffix string = 'r${utcNow('yyMMddHHmmss')}'
+
 var dbPath = '/data/mes.db'
 var dbEnv = [
   {
@@ -79,6 +82,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
       }
     }
     template: {
+      revisionSuffix: revisionSuffix
       volumes: [
         {
           name: 'mesdata'

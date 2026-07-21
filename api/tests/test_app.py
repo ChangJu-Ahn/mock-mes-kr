@@ -154,7 +154,22 @@ class WebConsoleTests(unittest.TestCase):
     def test_guide_page(self):
         r = self.client.get("/guide")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("공정", r.text)
+        for token in (
+            'data-page="guide"',
+            'class="guide-hero"',
+            'class="guide-steps"',
+            "로트 투입",
+            "FAB 공정실적",
+            "SEMI 자동 입고",
+            "패키징",
+            "FIN 완제품",
+            "X-API-Key: changjuahn",
+            "/api/docs",
+            "/mcp",
+            "start_lot",
+            "register_process_result",
+        ):
+            self.assertIn(token, r.text)
 
     def test_modern_shell_contract(self):
         r = self.client.get("/process")

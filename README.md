@@ -7,7 +7,7 @@ One shared SQLite database is exposed through **three surfaces**:
 
 | Surface | Audience | Endpoint | MES functions |
 | --- | --- | --- | --- |
-| **Web console** | Human | `/` | ALL 7 (view + input) — your control panel |
+| **Web console** | Human | `/` | ALL 7 (view + input) + summary **dashboard** — your control panel |
 | **REST API** | Agent | `/api` (docs at `/api/docs`) | 실적입력 · 실적조회 · 재고조회 · 재공조회 |
 | **MCP server** | Agent | `/mcp` (streamable HTTP) | 공정입력 · 공정조회 · 로트조회 |
 
@@ -102,21 +102,35 @@ docker-compose.yml   reference topology (Docker is not used for local dev)
 
 | Table | 한글 | Notes |
 | --- | --- | --- |
-| `lot` | 로트 | lot_id, product, tech_node, wafer_qty, priority, current_step, status, start_date |
+| `lot` | 로트 | lot_id, product, tech_node, **start_qty**, wafer_qty (current), priority, current_step, status, start_date |
 | `process_step` | 공정 (route) | seq, step_code, step_name, operation, eqp_type |
-| `process_history` | 공정 이력/실적 | lot_id, step_code, eqp_id, in_time, out_time, operator, result — written by 공정 입력 |
+| `process_history` | 공정 이력/실적 | lot_id, step_code, eqp_id, **in_qty, out_qty, scrap_qty, defect_code**, in_time, out_time, operator, result — written by 공정 입력 |
 | `inventory` | 재고 | item_code, item_name, category, qty, uom, location |
 | `production_result` | 실적 | result_date, line, eqp_id, product, good_qty, scrap_qty, yield_pct — written by 실적 입력 |
 | `equipment` | 설비 | eqp_id, eqp_name, type, status |
 
 **WIP (재공)** is a **derived** query — running lots grouped by `current_step`.
 
+### Wafer flow, defects & yield
+
+Every process move carries **quantities**: `in_qty` wafers enter the step (defaults
+to the lot's current `wafer_qty`), `scrap_qty` are lost to a defect (optional
+`defect_code`), and `out_qty = in_qty − scrap_qty` carries forward — so
+`lot.wafer_qty` **shrinks** as defects accumulate. Each lot keeps its immutable
+`start_qty`, and **cumulative yield** = `wafer_qty / start_qty × 100`. When a lot
+**passes the final step (TEST)** it is closed (`status = Done`) and a
+`production_result` (실적) is **auto-created** (good = final wafers, scrap =
+cumulative lot scrap) — linking 공정 → 실적. The **dashboard** at `/` rolls all of
+this up (wafers in/out, cumulative yield, defect rate, top defects, scrap by step).
+
 **Seeded snapshot** (reproducible, RNG-seeded): 4 products (LX9 AP 5nm, DDR5-16G
 10nm, V7 NAND 128L, PMIC-33 28nm); an 8-step route
 (Diffusion → Photo → Etch → Implant → CVD → CMP → Metrology → Test); 18 lots
-spread across the route; ~45 process-history rows; 10 inventory items (wafers,
-reticles, chemicals, gases, targets, finished goods, spares); 30 production
-results over the last ~10 days; 8 pieces of equipment.
+(deterministic **4 Done / 2 Hold / 12 Running**) spread across the route with
+modelled wafer loss (~88% cumulative yield, ~3% defect rate); 76 process-history
+rows; 10 inventory items (wafers, reticles, chemicals, gases, targets, finished
+goods, spares); 30 production results (26 daily + 4 auto-실적 from Done lots); 8
+pieces of equipment.
 
 ---
 
@@ -126,18 +140,40 @@ results over the last ~10 days; 8 pieces of equipment.
 
 Interactive docs and schema: `https://<fqdn>/api/docs` · `https://<fqdn>/api/openapi.json`
 
-```bash
-# 실적 조회 — list production results
-curl "https://<fqdn>/api/production-results?limit=5"
+Every list endpoint is **parameterized** (filters, search, sort), plus single-item
+lookups and aggregation:
 
-# 실적 입력 — register a production result (yield auto-computed if omitted)
+| Endpoint | 기능 | Parameters |
+| --- | --- | --- |
+| `GET /api/products` | product list | — |
+| `GET /api/production-results` | 실적 조회 | `product?`, `line?`, `eqp_id?`, `date_from?`, `date_to?`, `min_yield?`, `sort?` (date/yield/good/scrap), `order?` (asc/desc), `limit?` |
+| `POST /api/production-results` | 실적 입력 | body: `product`, `good_qty`, `scrap_qty?`, `line?`, `eqp_id?`, `result_date?`, `yield_pct?` |
+| `GET /api/production-results/summary` | 실적 aggregation | `group_by` (product/line) |
+| `GET /api/production-results/{id}` | one 실적 | path `id` (404 if missing) |
+| `GET /api/inventory` | 재고 조회 | `category?`, `location?`, `q?` (name/code search), `min_qty?`, `max_qty?` |
+| `GET /api/inventory/facets` | filter values | — (distinct categories + locations) |
+| `GET /api/inventory/{item_code}` | one item | path `item_code` (404 if missing) |
+| `GET /api/wip` | 재공 조회 | `step_code?` |
+
+```bash
+# 실적 조회 — top-yielding V7 NAND results
+curl "https://<fqdn>/api/production-results?product=V7%20NAND&min_yield=95&sort=yield&order=desc&limit=5"
+
+# 실적 입력 — register a result (yield auto-computed if omitted)
 curl -X POST "https://<fqdn>/api/production-results" \
   -H 'content-type: application/json' \
   -d '{"product":"LX9 AP","good_qty":480,"scrap_qty":12,"line":"FAB1-L1"}'
 
-# 재고 조회 / 재공 조회
-curl "https://<fqdn>/api/inventory"
-curl "https://<fqdn>/api/wip"
+# 실적 aggregation by product
+curl "https://<fqdn>/api/production-results/summary?group_by=product"
+
+# 재고 조회 — search + qty filter; and facets / single item
+curl "https://<fqdn>/api/inventory?q=wafer&min_qty=1000"
+curl "https://<fqdn>/api/inventory/facets"
+curl "https://<fqdn>/api/inventory/RAW-WAFER-300"
+
+# 재공 조회 — one step
+curl "https://<fqdn>/api/wip?step_code=ETCH"
 ```
 
 ### MCP server (Process & Lot)
@@ -146,11 +182,11 @@ Streamable-HTTP endpoint: `https://<fqdn>/mcp`. Tools:
 
 | Tool | 기능 | Parameters |
 | --- | --- | --- |
-| `register_process_move` | 공정 입력 | `lot_id`, `step_code`, `eqp_id?`, `operator?`, `result?` |
-| `get_process_route` | 공정 조회 (route) | — |
-| `get_process_history` | 공정 조회 (history) | `lot_id?`, `limit?` |
-| `get_lot` | 로트 조회 (one) | `lot_id` |
-| `list_lots` | 로트 조회 (list) | `status?`, `product?`, `current_step?`, `limit?` |
+| `register_process_move` | 공정 입력 | `lot_id`, `step_code`, `eqp_id?`, `in_qty?`, `scrap_qty?`, `defect_code?`, `operator?`, `result?` |
+| `get_process_route` | 공정 조회 (route) | `step_code?`, `eqp_type?` |
+| `get_process_history` | 공정 조회 (history) | `lot_id?`, `step_code?`, `result?`, `operator?`, `defect_code?`, `has_scrap?`, `limit?` |
+| `get_lot` | 로트 조회 (one) | `lot_id` (returns wafer qty + `cumulative_yield` + history) |
+| `list_lots` | 로트 조회 (list) | `status?`, `product?`, `current_step?`, `priority?`, `tech_node?`, `limit?` |
 
 Example with the MCP Python SDK:
 
@@ -164,10 +200,14 @@ async def main():
         async with ClientSession(r, w) as s:
             await s.initialize()
             print([t.name for t in (await s.list_tools()).tools])
+            # 공정 입력 with 3 scrapped wafers (out = in - scrap; lot shrinks)
             await s.call_tool("register_process_move",
-                              {"lot_id": "LOT0001", "step_code": "ETCH",
-                               "eqp_id": "EQP-ETCH01", "operator": "agent"})
-            print(await s.call_tool("get_lot", {"lot_id": "LOT0001"}))
+                              {"lot_id": "LOT0007", "step_code": "ETCH",
+                               "eqp_id": "EQP-ETCH01", "scrap_qty": 3,
+                               "defect_code": "Etch-Residue", "operator": "agent"})
+            # 공정 조회 — only moves that scrapped wafers
+            print(await s.call_tool("get_process_history", {"has_scrap": True}))
+            print(await s.call_tool("get_lot", {"lot_id": "LOT0007"}))
 
 asyncio.run(main())
 ```
@@ -198,7 +238,7 @@ point an MCP client at <http://localhost:8001/mcp>.
 Run the tests:
 
 ```bash
-python -m unittest api.tests.test_app mcp_server.test_server -v
+python -m unittest mes_core.test_db api.tests.test_app mcp_server.test_server -v
 ```
 
 ---

@@ -29,7 +29,7 @@
       <p class="nav-group">Overview</p>
       {{ nav_item("/", "대시보드", "Dashboard", "⌂") }}
       <p class="nav-group">Production</p>
-      {{ nav_item("/lots", "로트", "Lots", "▦", "/lots") }}
+      {{ nav_item("/lots", "로트", "Lots", "▦", "/lots/") }}
       {{ nav_item("/process", "공정실적", "Process Results", "↗") }}
       {{ nav_item("/wip", "재공", "WIP", "◫") }}
       <p class="nav-group">Inventory</p>
@@ -43,7 +43,7 @@
       {{ nav_item("/api/docs", "API 문서", "OpenAPI Docs", "{ }") }}
     </nav>
     <div class="system-card">
-      <div><span><i class="health-dot"></i>System healthy</span><b>LIVE</b></div>
+      <div><span><i class="health-dot" aria-hidden="true"></i>System healthy</span><b>LIVE</b></div>
       <div><span>Shared DB</span><span>SQLite WAL</span></div>
     </div>
   </aside>
@@ -58,7 +58,7 @@
       <div class="breadcrumbs">{% block breadcrumb %}운영 현황{% endblock %}</div>
       <div class="utility-actions">
         <a href="/guide">사용법</a>
-        <span class="health-pill"><i class="health-dot"></i>정상 운영</span>
+        <span class="health-pill"><i class="health-dot" aria-hidden="true"></i>정상 운영</span>
       </div>
     </header>
     <main class="page-content" id="main-content">

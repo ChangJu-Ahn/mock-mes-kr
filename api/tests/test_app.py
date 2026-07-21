@@ -174,6 +174,14 @@ class WebConsoleTests(unittest.TestCase):
             r'href="/process"[^>]*aria-current="page"|'
             r'aria-current="page"[^>]*href="/process"',
         )
+        lot_id = self.db.list_lot_ids()[0]
+        r2 = self.client.get(f"/lots/{lot_id}")
+        self.assertEqual(r2.status_code, 200)
+        self.assertRegex(
+            r2.text,
+            r'href="/lots"[^>]*aria-current="page"|'
+            r'aria-current="page"[^>]*href="/lots"',
+        )
 
     def test_feedback_banners_are_accessible(self):
         r = self.client.get("/lots", params={"message": "Saved", "error": "Problem"})

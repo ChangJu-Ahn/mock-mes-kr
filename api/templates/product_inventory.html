@@ -1,26 +1,39 @@
 {% extends "base.html" %}
-{% block title %}Product Inventory · Mock MES{% endblock %}
+{% block title %}제품재고 · Mock MES{% endblock %}
+{% block breadcrumb %}재고관리 / <strong>제품재고</strong>{% endblock %}
 {% block content %}
-<h1>제품 인벤토리 Product inventory (SEMI / FIN)</h1>
-<section class="panel">
-  <h2>패키징 Packaging (SEMI → FIN)</h2>
-  <form method="post" action="/packaging" class="row">
-    <label>Product
-      <select name="product_code" required>
-        {% for p in products %}<option value="{{ p.product_code }}">{{ p.product_code }}</option>{% endfor %}
-      </select></label>
-    <label>In qty (SEMI) <input type="number" name="in_qty" min="1" required></label>
-    <label>Scrap <input type="number" name="scrap_qty" value="0" min="0"></label>
-    <label>Lot <input name="lot_id" list="lot_ids"></label>
-    <datalist id="lot_ids">{% for l in lot_ids %}<option value="{{ l }}">{% endfor %}</datalist>
-    <label>Eqp <input name="eqp_id" list="eqps"></label>
-    <datalist id="eqps">{% for e in equipment %}<option value="{{ e.eqp_id }}">{% endfor %}</datalist>
-    <button type="submit">Package</button>
-  </form>
-</section>
-<table><thead><tr><th>Product</th><th>Name</th><th>Type</th><th>Qty</th><th>UoM</th><th>Location</th></tr></thead><tbody>
-{% for r in rows %}<tr><td>{{ r.product_code }}</td><td>{{ r.product_name or '' }}</td>
-  <td>{{ r.item_type }}</td><td>{{ r.qty|round(0) }}</td><td>{{ r.uom }}</td><td>{{ r.location or '' }}</td></tr>
-{% else %}<tr><td colspan="6">Empty</td></tr>{% endfor %}
-</tbody></table>
+<div data-page="product-inventory">
+  <header class="page-header"><div><p class="page-eyebrow">Inventory</p><h1>제품재고</h1><p class="page-description">SEMI 웨이퍼를 패키징하여 FIN 완제품을 생성하고 재고를 조회합니다. · Product Inventory</p></div><div class="page-actions"><button type="button" data-open-panel="packaging">+ 패키징</button></div></header>
+  <details class="action-panel" id="packaging">
+    <summary><span><strong>패키징</strong><small>SEMI → FIN Packaging</small></span></summary>
+    <div class="action-body">
+      <form method="post" action="/packaging">
+        <datalist id="lot_ids">{% for l in lot_ids %}<option value="{{ l }}">{% endfor %}</datalist>
+        <datalist id="eqps">{% for e in equipment %}<option value="{{ e.eqp_id }}">{% endfor %}</datalist>
+        <div class="form-grid">
+          <label class="form-field">제품 <span class="required">*</span><select name="product_code" required>{% for p in products %}<option value="{{ p.product_code }}">{{ p.product_code }}</option>{% endfor %}</select></label>
+          <label class="form-field">투입 수량 (SEMI) <span class="required">*</span><input type="number" name="in_qty" min="1" required></label>
+          <label class="form-field">스크랩<input type="number" name="scrap_qty" value="0" min="0"></label>
+          <label class="form-field">로트<input name="lot_id" list="lot_ids"></label>
+          <label class="form-field">설비<input name="eqp_id" list="eqps"></label>
+        </div>
+        <div class="form-footer"><p class="form-note">SEMI 재고가 부족하면 패키징이 차단되며, 성공 시 FIN 제품실적이 자동 생성됩니다.</p><button type="submit">패키징 실행</button></div>
+      </form>
+    </div>
+  </details>
+  <section class="data-panel">
+    <div class="panel-header"><h2>제품 재고 현황</h2><span class="panel-meta">{{ rows|length }} items</span></div>
+    <div class="table-wrap"><table><thead><tr><th>제품</th><th>이름</th><th>유형</th><th class="numeric">수량</th><th>UoM</th><th>위치</th></tr></thead><tbody>
+    {% for r in rows %}<tr>
+      <td><strong>{{ r.product_code }}</strong></td>
+      <td>{{ r.product_name or "" }}</td>
+      <td><span class="badge badge-{{ r.item_type|lower }}">{{ r.item_type }}</span></td>
+      <td class="numeric">{{ r.qty|round(0) }}</td>
+      <td>{{ r.uom }}</td>
+      <td>{{ r.location or "" }}</td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="empty-state">재고 데이터가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
 {% endblock %}

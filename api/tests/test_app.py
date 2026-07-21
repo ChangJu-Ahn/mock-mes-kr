@@ -268,3 +268,34 @@ class WebConsoleTests(unittest.TestCase):
         self.assertIn('class="summary-grid"', html)
         self.assertIn("누적 수율", html)
         self.assertIn("공정 이력", html)
+
+    def test_inventory_and_master_forms_preserve_contracts(self):
+        contracts = {
+            "/product-inventory": (
+                'data-page="product-inventory"', 'action="/packaging"',
+                'name="product_code"', 'name="in_qty"', 'name="scrap_qty"',
+                'name="lot_id"', 'name="eqp_id"',
+            ),
+            "/product-results": (
+                'data-page="product-results"', 'action="/product-results"',
+                'name="lot_id"', 'name="item_type"', 'name="good_qty"',
+                'name="scrap_qty"', 'name="source"',
+            ),
+            "/materials": (
+                'data-page="materials"', 'action="/materials/receive"',
+                'name="material_code"', 'name="qty"', 'name="material_name"',
+                'name="category"', 'name="uom"', 'name="location"',
+                'name="step_code"',
+            ),
+            "/bom": (
+                'data-page="bom"', 'action="/bom"', 'name="product_code"',
+                'name="step_code"', 'name="material_code"',
+                'name="qty_per_wafer"', 'name="uom"',
+            ),
+        }
+        for path, tokens in contracts.items():
+            html = self.client.get(path).text
+            for token in tokens:
+                self.assertIn(token, html, f"{path}: {token}")
+            self.assertIn('class="action-panel"', html)
+            self.assertIn('class="table-wrap"', html)

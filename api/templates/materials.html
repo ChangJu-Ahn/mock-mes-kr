@@ -1,36 +1,58 @@
 {% extends "base.html" %}
-{% block title %}Materials · Mock MES{% endblock %}
+{% block title %}자재 · Mock MES{% endblock %}
+{% block breadcrumb %}재고관리 / <strong>자재</strong>{% endblock %}
 {% block content %}
-<h1>자재 인벤토리 Material inventory</h1>
-<section class="panel">
-  <h2>자재 입고 Receive material</h2>
-  <form method="post" action="/materials/receive" class="row">
-    <label>Code <input name="material_code" required></label>
-    <label>Qty <input type="number" step="any" name="qty" min="0" required></label>
-    <label>Name <input name="material_name"></label>
-    <label>Category <input name="category"></label>
-    <label>UoM <input name="uom"></label>
-    <label>Location <input name="location"></label>
-    <button type="submit">Receive</button>
+<div data-page="materials">
+  <header class="page-header"><div><p class="page-eyebrow">Inventory</p><h1>자재</h1><p class="page-description">자재 재고를 입고하고 현황 및 공정별 소요량을 조회합니다. · Materials</p></div><div class="page-actions"><button type="button" data-open-panel="material-receipt">+ 자재 입고</button></div></header>
+  <details class="action-panel" id="material-receipt">
+    <summary><span><strong>자재 입고</strong><small>Receive material</small></span></summary>
+    <div class="action-body">
+      <form method="post" action="/materials/receive">
+        <div class="form-grid">
+          <label class="form-field">자재 코드 <span class="required">*</span><input name="material_code" required></label>
+          <label class="form-field">수량 <span class="required">*</span><input type="number" step="any" name="qty" min="0" required></label>
+          <label class="form-field">자재명<input name="material_name"></label>
+          <label class="form-field">분류<input name="category"></label>
+          <label class="form-field">UoM<input name="uom"></label>
+          <label class="form-field">위치<input name="location"></label>
+        </div>
+        <div class="form-footer"><p class="form-note">기존 자재 코드를 입력하면 재고가 추가되고, 신규 코드는 자재가 등록됩니다.</p><button type="submit">자재 입고</button></div>
+      </form>
+    </div>
+  </details>
+  <form method="get" action="/materials" class="filter-bar">
+    <label class="form-field">분류<input name="category" value="{{ filters.category }}"></label>
+    <label class="form-field">공정 (BOM 소요)<input name="step_code" value="{{ filters.step_code }}" list="steps"></label>
+    <datalist id="steps">{% for s in steps %}<option value="{{ s }}">{% endfor %}</datalist>
+    <button type="submit">필터 적용</button>
   </form>
-</section>
-<form method="get" action="/materials" class="row filters">
-  <label>Category <input name="category" value="{{ filters.category }}"></label>
-  <label>Step (for BOM usage) <input name="step_code" value="{{ filters.step_code }}" list="steps"></label>
-  <datalist id="steps">{% for s in steps %}<option value="{{ s }}">{% endfor %}</datalist>
-  <button type="submit">Filter</button>
-</form>
-<h2>On-hand stock</h2>
-<table><thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Qty</th><th>UoM</th><th>Location</th></tr></thead><tbody>
-{% for r in rows %}<tr><td>{{ r.material_code }}</td><td>{{ r.material_name }}</td>
-  <td>{{ r.category }}</td><td>{{ r.qty|round(2) }}</td><td>{{ r.uom }}</td><td>{{ r.location }}</td></tr>
-{% else %}<tr><td colspan="6">Empty</td></tr>{% endfor %}
-</tbody></table>
-<h2>공정별 자재 소요 Usage by step (BOM ⋈ stock)</h2>
-<table><thead><tr><th>Step</th><th>Product</th><th>Material</th><th>Per wafer</th><th>On hand</th><th>UoM</th></tr></thead><tbody>
-{% for r in by_step %}<tr><td>{{ r.step_code }} {{ r.step_name or '' }}</td><td>{{ r.product_code }}</td>
-  <td>{{ r.material_code }} {{ r.material_name or '' }}</td><td>{{ r.qty_per_wafer }}</td>
-  <td>{{ r.on_hand_qty|round(2) }}</td><td>{{ r.uom }}</td></tr>
-{% else %}<tr><td colspan="6">No BOM rows</td></tr>{% endfor %}
-</tbody></table>
+  <section class="data-panel">
+    <div class="panel-header"><h2>현재 자재 재고 · On-hand Stock</h2><span class="panel-meta">{{ rows|length }} materials</span></div>
+    <div class="table-wrap"><table><thead><tr><th>코드</th><th>자재명</th><th>분류</th><th class="numeric">수량</th><th>UoM</th><th>위치</th></tr></thead><tbody>
+    {% for r in rows %}<tr>
+      <td class="mono">{{ r.material_code }}</td>
+      <td>{{ r.material_name }}</td>
+      <td>{{ r.category }}</td>
+      <td class="numeric">{% if r.qty < 20 %}<strong class="text-danger">{{ r.qty|round(2) }}</strong>{% else %}{{ r.qty|round(2) }}{% endif %}</td>
+      <td>{{ r.uom }}</td>
+      <td>{{ r.location }}</td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="empty-state">자재 데이터가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+  <section class="data-panel">
+    <div class="panel-header"><h2>공정별 자재 소요 · BOM × Stock</h2><span class="panel-meta">{{ by_step|length }} rows</span></div>
+    <div class="table-wrap"><table><thead><tr><th>공정</th><th>제품</th><th>자재</th><th class="numeric">단위 소요</th><th class="numeric">재고</th><th>UoM</th></tr></thead><tbody>
+    {% for r in by_step %}<tr>
+      <td>{{ r.step_code }} <span class="muted">{{ r.step_name or "" }}</span></td>
+      <td>{{ r.product_code }}</td>
+      <td>{{ r.material_code }} <span class="muted">{{ r.material_name or "" }}</span></td>
+      <td class="numeric">{{ r.qty_per_wafer }}</td>
+      <td class="numeric">{{ r.on_hand_qty|round(2) }}</td>
+      <td>{{ r.uom }}</td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="empty-state">BOM 소요 데이터가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
 {% endblock %}

@@ -1,0 +1,1276 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Mock MES REST API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api": {
+      "get": {
+        "tags": [
+          "Index"
+        ],
+        "summary": "Api Index",
+        "operationId": "api_index_api_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiIndex"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/products": {
+      "get": {
+        "tags": [
+          "Product"
+        ],
+        "summary": "Get Products",
+        "operationId": "get_products_api_products_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProductRow"
+                  },
+                  "type": "array",
+                  "title": "Response Get Products Api Products Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/product-inventory": {
+      "get": {
+        "tags": [
+          "Product"
+        ],
+        "summary": "Get Product Inventory",
+        "operationId": "get_product_inventory_api_product_inventory_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "product_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Product Code",
+              "nullable": true
+            }
+          },
+          {
+            "name": "item_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "SEMI",
+                "FIN"
+              ],
+              "type": "string",
+              "title": "Item Type",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProductInventoryRow"
+                  },
+                  "title": "Response Get Product Inventory Api Product Inventory Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/product-results": {
+      "get": {
+        "tags": [
+          "Product"
+        ],
+        "summary": "Get Product Results",
+        "operationId": "get_product_results_api_product_results_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "product_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Product Code",
+              "nullable": true
+            }
+          },
+          {
+            "name": "item_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "SEMI",
+                "FIN"
+              ],
+              "type": "string",
+              "title": "Item Type",
+              "nullable": true
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "AUTO_FAB",
+                "AUTO_PACK",
+                "MANUAL"
+              ],
+              "type": "string",
+              "title": "Source",
+              "nullable": true
+            }
+          },
+          {
+            "name": "lot_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Lot Id",
+              "nullable": true
+            }
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "YYYY-MM-DD inclusive",
+              "title": "Date From",
+              "nullable": true
+            },
+            "description": "YYYY-MM-DD inclusive"
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "YYYY-MM-DD inclusive",
+              "title": "Date To",
+              "nullable": true
+            },
+            "description": "YYYY-MM-DD inclusive"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProductResultRow"
+                  },
+                  "title": "Response Get Product Results Api Product Results Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Product"
+        ],
+        "summary": "Create Product Result",
+        "operationId": "create_product_result_api_product_results_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductResultCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Product Result Api Product Results Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/packaging": {
+      "post": {
+        "tags": [
+          "Product"
+        ],
+        "summary": "Create Packaging",
+        "operationId": "create_packaging_api_packaging_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackagingCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Packaging Api Packaging Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/materials": {
+      "get": {
+        "tags": [
+          "Material"
+        ],
+        "summary": "Get Materials",
+        "operationId": "get_materials_api_materials_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Category",
+              "nullable": true
+            }
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Location",
+              "nullable": true
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "search material_code / material_name",
+              "title": "Q",
+              "nullable": true
+            },
+            "description": "search material_code / material_name"
+          },
+          {
+            "name": "min_qty",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "title": "Min Qty",
+              "nullable": true
+            }
+          },
+          {
+            "name": "max_qty",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "title": "Max Qty",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MaterialRow"
+                  },
+                  "title": "Response Get Materials Api Materials Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/materials/by-step": {
+      "get": {
+        "tags": [
+          "Material"
+        ],
+        "summary": "Get Materials By Step",
+        "description": "공정별 자재 소요/잔량 (BOM ⋈ material).",
+        "operationId": "get_materials_by_step_api_materials_by_step_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "step_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Step Code",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MaterialByStepRow"
+                  },
+                  "title": "Response Get Materials By Step Api Materials By Step Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/materials/receipt": {
+      "post": {
+        "tags": [
+          "Material"
+        ],
+        "summary": "Create Material Receipt",
+        "operationId": "create_material_receipt_api_materials_receipt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialReceipt"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRow"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/bom": {
+      "get": {
+        "tags": [
+          "BOM"
+        ],
+        "summary": "Get Bom",
+        "operationId": "get_bom_api_bom_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "product_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Product Code",
+              "nullable": true
+            }
+          },
+          {
+            "name": "step_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Step Code",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BomRow"
+                  },
+                  "title": "Response Get Bom Api Bom Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "BOM"
+        ],
+        "summary": "Put Bom",
+        "operationId": "put_bom_api_bom_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BomUpsert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BomRow"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bom/{bom_id}": {
+      "delete": {
+        "tags": [
+          "BOM"
+        ],
+        "summary": "Remove Bom",
+        "operationId": "remove_bom_api_bom__bom_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bom_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Bom Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Remove Bom Api Bom  Bom Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiIndex": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "docs": {
+            "type": "string",
+            "title": "Docs"
+          },
+          "endpoints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Endpoints"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "docs",
+          "endpoints"
+        ],
+        "title": "ApiIndex"
+      },
+      "BomRow": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "product_code": {
+            "type": "string",
+            "title": "Product Code"
+          },
+          "step_code": {
+            "type": "string",
+            "title": "Step Code"
+          },
+          "step_name": {
+            "type": "string",
+            "title": "Step Name",
+            "nullable": true
+          },
+          "material_code": {
+            "type": "string",
+            "title": "Material Code"
+          },
+          "material_name": {
+            "type": "string",
+            "title": "Material Name",
+            "nullable": true
+          },
+          "qty_per_wafer": {
+            "type": "number",
+            "title": "Qty Per Wafer"
+          },
+          "uom": {
+            "type": "string",
+            "title": "Uom",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "product_code",
+          "step_code",
+          "material_code",
+          "qty_per_wafer"
+        ],
+        "title": "BomRow"
+      },
+      "BomUpsert": {
+        "properties": {
+          "product_code": {
+            "type": "string",
+            "title": "Product Code"
+          },
+          "step_code": {
+            "type": "string",
+            "title": "Step Code"
+          },
+          "material_code": {
+            "type": "string",
+            "title": "Material Code"
+          },
+          "qty_per_wafer": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Qty Per Wafer"
+          },
+          "uom": {
+            "type": "string",
+            "title": "Uom",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_code",
+          "step_code",
+          "material_code",
+          "qty_per_wafer"
+        ],
+        "title": "BomUpsert"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "db": {
+            "type": "string",
+            "title": "Db"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "db",
+          "counts"
+        ],
+        "title": "HealthResponse"
+      },
+      "MaterialByStepRow": {
+        "properties": {
+          "product_code": {
+            "type": "string",
+            "title": "Product Code"
+          },
+          "product_name": {
+            "type": "string",
+            "title": "Product Name",
+            "nullable": true
+          },
+          "step_code": {
+            "type": "string",
+            "title": "Step Code"
+          },
+          "step_name": {
+            "type": "string",
+            "title": "Step Name",
+            "nullable": true
+          },
+          "material_code": {
+            "type": "string",
+            "title": "Material Code"
+          },
+          "material_name": {
+            "type": "string",
+            "title": "Material Name",
+            "nullable": true
+          },
+          "qty_per_wafer": {
+            "type": "number",
+            "title": "Qty Per Wafer"
+          },
+          "on_hand_qty": {
+            "type": "number",
+            "title": "On Hand Qty"
+          },
+          "uom": {
+            "type": "string",
+            "title": "Uom",
+            "nullable": true
+          },
+          "location": {
+            "type": "string",
+            "title": "Location",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_code",
+          "step_code",
+          "material_code",
+          "qty_per_wafer",
+          "on_hand_qty"
+        ],
+        "title": "MaterialByStepRow"
+      },
+      "MaterialReceipt": {
+        "properties": {
+          "material_code": {
+            "type": "string",
+            "title": "Material Code"
+          },
+          "qty": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Qty"
+          },
+          "material_name": {
+            "type": "string",
+            "title": "Material Name",
+            "nullable": true
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "nullable": true
+          },
+          "uom": {
+            "type": "string",
+            "title": "Uom",
+            "nullable": true
+          },
+          "location": {
+            "type": "string",
+            "title": "Location",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "material_code",
+          "qty"
+        ],
+        "title": "MaterialReceipt"
+      },
+      "MaterialRow": {
+        "properties": {
+          "material_code": {
+            "type": "string",
+            "title": "Material Code"
+          },
+          "material_name": {
+            "type": "string",
+            "title": "Material Name"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "nullable": true
+          },
+          "qty": {
+            "type": "number",
+            "title": "Qty"
+          },
+          "uom": {
+            "type": "string",
+            "title": "Uom",
+            "nullable": true
+          },
+          "location": {
+            "type": "string",
+            "title": "Location",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "material_code",
+          "material_name",
+          "qty"
+        ],
+        "title": "MaterialRow"
+      },
+      "PackagingCreate": {
+        "properties": {
+          "product_code": {
+            "type": "string",
+            "title": "Product Code"
+          },
+          "in_qty": {
+            "type": "integer",
+            "exclusiveMinimum": true,
+            "title": "In Qty",
+            "minimum": 0.0
+          },
+          "scrap_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Scrap Qty",
+            "default": 0
+          },
+          "lot_id": {
+            "type": "string",
+            "title": "Lot Id",
+            "nullable": true
+          },
+          "eqp_id": {
+            "type": "string",
+            "title": "Eqp Id",
+            "nullable": true
+          },
+          "operator": {
+            "type": "string",
+            "title": "Operator",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_code",
+          "in_qty"
+        ],
+        "title": "PackagingCreate"
+      },
+      "ProductInventoryRow": {
+        "properties": {
+          "product_code": {
+            "type": "string",
+            "title": "Product Code"
+          },
+          "product_name": {
+            "type": "string",
+            "title": "Product Name",
+            "nullable": true
+          },
+          "item_type": {
+            "type": "string",
+            "title": "Item Type"
+          },
+          "qty": {
+            "type": "number",
+            "title": "Qty"
+          },
+          "uom": {
+            "type": "string",
+            "title": "Uom",
+            "nullable": true
+          },
+          "location": {
+            "type": "string",
+            "title": "Location",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_code",
+          "item_type",
+          "qty"
+        ],
+        "title": "ProductInventoryRow"
+      },
+      "ProductResultCreate": {
+        "properties": {
+          "lot_id": {
+            "type": "string",
+            "title": "Lot Id"
+          },
+          "item_type": {
+            "type": "string",
+            "enum": [
+              "SEMI",
+              "FIN"
+            ],
+            "title": "Item Type"
+          },
+          "good_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Good Qty"
+          },
+          "scrap_qty": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Scrap Qty",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "lot_id",
+          "item_type",
+          "good_qty"
+        ],
+        "title": "ProductResultCreate"
+      },
+      "ProductResultRow": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "result_date": {
+            "type": "string",
+            "title": "Result Date"
+          },
+          "lot_id": {
+            "type": "string",
+            "title": "Lot Id",
+            "nullable": true
+          },
+          "product_code": {
+            "type": "string",
+            "title": "Product Code"
+          },
+          "product_name": {
+            "type": "string",
+            "title": "Product Name",
+            "nullable": true
+          },
+          "item_type": {
+            "type": "string",
+            "title": "Item Type"
+          },
+          "good_qty": {
+            "type": "integer",
+            "title": "Good Qty",
+            "nullable": true
+          },
+          "scrap_qty": {
+            "type": "integer",
+            "title": "Scrap Qty",
+            "nullable": true
+          },
+          "yield_pct": {
+            "type": "number",
+            "title": "Yield Pct",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "nullable": true
+          },
+          "line": {
+            "type": "string",
+            "title": "Line",
+            "nullable": true
+          },
+          "eqp_id": {
+            "type": "string",
+            "title": "Eqp Id",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "result_date",
+          "product_code",
+          "item_type"
+        ],
+        "title": "ProductResultRow"
+      },
+      "ProductRow": {
+        "properties": {
+          "product_code": {
+            "type": "string",
+            "title": "Product Code"
+          },
+          "product_name": {
+            "type": "string",
+            "title": "Product Name"
+          },
+          "tech_node": {
+            "type": "string",
+            "title": "Tech Node",
+            "nullable": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "product_code",
+          "product_name"
+        ],
+        "title": "ProductRow"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://mock-mes.greenrock-bb44c93a.koreacentral.azurecontainerapps.io",
+      "description": "Live Azure Container Apps deployment"
+    }
+  ],
+  "security": [
+    {
+      "APIKeyHeader": []
+    }
+  ]
+}

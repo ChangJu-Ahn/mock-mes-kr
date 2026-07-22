@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ lot.lot_id }} · Mock MES{% endblock %}
+{% block breadcrumb %}생산관리 / <a href="/lots">로트</a> / <strong>{{ lot.lot_id }}</strong>{% endblock %}
+{% block content %}
+<div data-page="lot-detail">
+  <header class="page-header">
+    <div>
+      <p class="page-eyebrow">Production · Lot Detail</p>
+      <h1>{{ lot.lot_id }}</h1>
+      <p class="page-description">{{ lot.product_code }} · {{ lot.product_name or "" }} · {{ lot.tech_node }}</p>
+    </div>
+    <div class="page-actions"><a class="button button-secondary" href="/lots">← 로트 목록</a></div>
+  </header>
+  <div class="summary-grid">
+    <div class="summary-card"><span>제품 Product</span><strong>{{ lot.product_code }}</strong><small class="muted">{{ lot.product_name or "" }}</small></div>
+    <div class="summary-card"><span>Tech Node</span><strong>{{ lot.tech_node }}</strong></div>
+    <div class="summary-card"><span>투입 수량 Start Qty</span><strong>{{ lot.start_qty }}</strong></div>
+    <div class="summary-card"><span>현재 수량 Current Wafers</span><strong>{{ lot.wafer_qty }}</strong></div>
+    <div class="summary-card"><span>누적 수율 Cumulative Yield</span><strong>{{ lot.cumulative_yield }}%</strong></div>
+    <div class="summary-card"><span>현재 공정 Current Step</span><strong>{{ lot.current_step }}</strong></div>
+    <div class="summary-card"><span>우선순위 Priority</span><strong><span class="badge badge-{{ lot.priority|lower }}">{{ lot.priority }}</span></strong></div>
+    <div class="summary-card"><span>상태 Status</span><strong><span class="badge badge-{{ lot.status|lower }}">{{ lot.status }}</span></strong></div>
+  </div>
+  <section class="data-panel">
+    <div class="panel-header"><h2>공정 이력 Process History</h2><span class="panel-meta">{{ lot.history|length }} moves</span></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>공정</th><th>설비</th><th class="numeric">투입</th><th class="numeric">산출</th><th class="numeric">스크랩</th><th>불량 코드</th><th>결과</th><th>완료 시각</th></tr></thead><tbody>
+    {% for h in lot.history %}<tr>
+      <td class="mono">{{ h.id }}</td>
+      <td><strong>{{ h.step_code }}</strong> <span class="muted">{{ h.step_name or "" }}</span></td>
+      <td>{{ h.eqp_id or "" }}</td>
+      <td class="numeric">{{ h.in_qty }}</td>
+      <td class="numeric">{{ h.out_qty }}</td>
+      <td class="numeric">{{ h.scrap_qty }}</td>
+      <td>{{ h.defect_code or "" }}</td>
+      <td><span class="badge badge-{{ h.result|lower }}">{{ h.result }}</span></td>
+      <td class="muted">{{ h.out_time or "" }}</td>
+    </tr>
+    {% else %}<tr><td colspan="9" class="empty-state">공정 실적이 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
+{% endblock %}

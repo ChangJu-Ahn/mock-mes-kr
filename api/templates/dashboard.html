@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}대시보드 · Mock MES{% endblock %}
+{% block breadcrumb %}운영 현황 / <strong>대시보드</strong>{% endblock %}
+{% block content %}
+<div data-page="dashboard">
+  <header class="page-header">
+    <div>
+      <p class="page-eyebrow">Fab Command Center</p>
+      <h1>Fab 운영 대시보드</h1>
+      <p class="page-description">FAB부터 패키징까지 현재 생산 흐름을 한눈에 확인합니다.</p>
+    </div>
+    <div class="page-actions">
+      <a class="button button-secondary" href="/guide">사용법 보기</a>
+      <a class="button" href="/lots">+ 로트 투입</a>
+    </div>
+  </header>
+  <section class="kpi-grid" aria-label="주요 생산 지표">
+    {% for label, english, value, icon in [
+      ("전체 로트", "Total lots", summary.lot_total, "▦"),
+      ("투입 웨이퍼", "Wafers started", summary.wafers_started, "◉"),
+      ("재공 로트", "WIP lots", summary.wip_total_lots, "↗"),
+      ("반제품 재고", "SEMI stock", summary.semi_total|round(0), "◇"),
+      ("완제품 재고", "FIN stock", summary.fin_total|round(0), "✓"),
+      ("자재 품목", "Materials", summary.material_total_items, "◈")
+    ] %}
+    <article class="kpi-card">
+      <div class="kpi-label"><span>{{ label }}</span><i class="kpi-icon">{{ icon }}</i></div>
+      <strong class="kpi-value">{{ value }}</strong><small>{{ english }}</small>
+    </article>
+    {% endfor %}
+  </section>
+  <section class="panel">
+    <div class="panel-header"><h2>생산 흐름</h2><span class="panel-meta">Production Flow · WIP lots by step</span></div>
+    <div class="process-flow">
+      {% set fab_steps = [("DIFF","확산"),("PHOTO","포토"),("ETCH","식각"),("IMPL","이온주입"),("CVD","증착"),("CMP","평탄화"),("METRO","계측"),("TEST","검사")] %}
+      {% for code, name in fab_steps %}
+        {% set ns = namespace(lots=0, wafers=0) %}
+        {% for w in summary.wip_by_step %}{% if w.step_code == code %}{% set ns.lots = w.lot_count %}{% set ns.wafers = w.wafer_qty %}{% endif %}{% endfor %}
+        <div class="flow-node{% if ns.lots %} is-active{% endif %}">
+          <strong>{{ code }}</strong><small>{{ name }} · {{ ns.lots }} lots</small>
+        </div>
+        <span class="flow-arrow" aria-hidden="true">›</span>
+      {% endfor %}
+      <div class="flow-node"><strong>PKG</strong><small>패키징 · SEMI→FIN</small></div>
+    </div>
+  </section>
+  <div class="grid-2">
+    <section class="data-panel">
+      <div class="panel-header"><h2>공정별 재공</h2><span class="panel-meta">{{ summary.wip_total_lots }} lots</span></div>
+      <div class="table-wrap"><table><thead><tr><th>순서</th><th>공정</th><th>단계</th><th class="numeric">로트 수</th><th class="numeric">웨이퍼 수</th></tr></thead><tbody>
+      {% for w in summary.wip_by_step %}<tr><td>{{ w.seq }}</td><td><strong>{{ w.step_code }}</strong> <span class="muted">{{ w.step_name }}</span></td><td>{{ w.stage }}</td><td class="numeric">{{ w.lot_count }}</td><td class="numeric">{{ w.wafer_qty }}</td></tr>
+      {% else %}<tr><td colspan="5" class="empty-state">현재 재공이 없습니다.</td></tr>{% endfor %}
+      </tbody></table></div>
+    </section>
+    <div>
+      <section class="data-panel">
+        <div class="panel-header"><h2>로트 상태</h2><span class="panel-meta">Lot Status</span></div>
+        <div class="summary-grid">{% for s in summary.lots_by_status %}<article class="summary-card"><span>{{ s.status }}</span><strong>{{ s.n }}</strong><small class="badge badge-{{ s.status|lower }}">{{ s.status }}</small></article>{% endfor %}</div>
+      </section>
+      <section class="data-panel">
+        <div class="panel-header"><h2>주요 불량</h2><span class="panel-meta">Top Defects</span></div>
+        <div class="table-wrap"><table><thead><tr><th>불량 코드</th><th class="numeric">건수</th></tr></thead><tbody>
+        {% for d in summary.top_defects %}<tr><td>{{ d.defect_code }}</td><td class="numeric">{{ d.n }}</td></tr>{% else %}<tr><td colspan="2" class="empty-state">등록된 불량이 없습니다.</td></tr>{% endfor %}
+        </tbody></table></div>
+      </section>
+    </div>
+  </div>
+  <div class="grid-2">
+    <section class="data-panel"><div class="panel-header"><h2>낮은 자재 재고</h2><a href="/materials">자재 보기 →</a></div><div class="table-wrap"><table><thead><tr><th>코드</th><th>자재명</th><th class="numeric">수량</th><th>단위</th></tr></thead><tbody>{% for m in summary.low_materials %}<tr><td class="mono">{{ m.material_code }}</td><td>{{ m.material_name }}</td><td class="numeric"><strong class="text-danger">{{ m.qty|round(2) }}</strong></td><td>{{ m.uom }}</td></tr>{% else %}<tr><td colspan="4" class="empty-state">모든 자재 재고가 충분합니다.</td></tr>{% endfor %}</tbody></table></div></section>
+    <section class="data-panel"><div class="panel-header"><h2>설비 상태</h2><a href="/equipment">설비 보기 →</a></div><div class="table-wrap"><table><thead><tr><th>설비</th><th>유형</th><th>상태</th></tr></thead><tbody>{% for e in summary.equipment %}<tr><td><strong>{{ e.eqp_id }}</strong><br><span class="muted">{{ e.eqp_name }}</span></td><td>{{ e.type }}</td><td><span class="badge badge-{{ e.status|lower }}">{{ e.status }}</span></td></tr>{% endfor %}</tbody></table></div></section>
+  </div>
+  <section class="data-panel"><div class="panel-header"><h2>최근 공정실적</h2><a href="/process">전체 보기 →</a></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>로트</th><th>공정</th><th class="numeric">투입</th><th class="numeric">산출</th><th class="numeric">스크랩</th><th>불량 코드</th><th>판정</th></tr></thead><tbody>{% for r in summary.recent_process %}<tr><td>#{{ r.id }}</td><td><a class="mono" href="/lots/{{ r.lot_id }}">{{ r.lot_id }}</a></td><td>{{ r.step_code }}</td><td class="numeric">{{ r.in_qty }}</td><td class="numeric">{{ r.out_qty }}</td><td class="numeric">{{ r.scrap_qty }}</td><td>{{ r.defect_code or "—" }}</td><td><span class="badge badge-{{ r.result|lower }}">{{ r.result }}</span></td></tr>{% endfor %}</tbody></table></div></section>
+  <section class="data-panel"><div class="panel-header"><h2>최근 제품실적</h2><a href="/product-results">전체 보기 →</a></div><div class="table-wrap"><table><thead><tr><th>일자</th><th>로트</th><th>제품</th><th>유형</th><th class="numeric">양품</th><th class="numeric">수율</th><th>출처</th></tr></thead><tbody>{% for r in summary.recent_products %}<tr><td>{{ r.result_date }}</td><td>{{ r.lot_id or "—" }}</td><td>{{ r.product_code }}</td><td><span class="badge badge-{{ r.item_type|lower }}">{{ r.item_type }}</span></td><td class="numeric">{{ r.good_qty }}</td><td class="numeric">{{ r.yield_pct }}%</td><td><span class="badge badge-{{ r.source|lower }}">{{ r.source }}</span></td></tr>{% endfor %}</tbody></table></div></section>
+</div>
+{% endblock %}

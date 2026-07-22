@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}공정실적 · Mock MES{% endblock %}
+{% block breadcrumb %}생산관리 / <strong>공정실적</strong>{% endblock %}
+{% block content %}
+<div data-page="process">
+  <header class="page-header"><div><p class="page-eyebrow">Production</p><h1>공정실적</h1><p class="page-description">웨이퍼 로트의 공정 실적을 등록하고 최근 결과를 조회합니다. · Process Results</p></div><div class="page-actions"><button type="button" data-open-panel="register-result">+ 공정실적 등록</button></div></header>
+  <details class="action-panel" id="register-result">
+    <summary><span><strong>공정실적 입력</strong><small>Register process result</small></span></summary>
+    <div class="action-body">
+      <form method="post" action="/process/results">
+        <datalist id="lot_ids">{% for l in lot_ids %}<option value="{{ l }}">{% endfor %}</datalist>
+        <datalist id="steps">{% for s in steps %}<option value="{{ s }}">{% endfor %}</datalist>
+        <datalist id="eqps">{% for e in equipment %}<option value="{{ e.eqp_id }}">{% endfor %}</datalist>
+        <datalist id="defects">{% for d in defect_codes %}<option value="{{ d }}">{% endfor %}</datalist>
+        <div class="form-grid">
+          <label class="form-field">로트 ID <span class="required">*</span><input name="lot_id" list="lot_ids" required></label>
+          <label class="form-field">공정 <span class="required">*</span><input name="step_code" list="steps" required></label>
+          <label class="form-field">설비<input name="eqp_id" list="eqps"></label>
+          <label class="form-field">투입 수량<input type="number" name="in_qty" placeholder="로트 현재 수량"></label>
+          <label class="form-field">스크랩<input type="number" name="scrap_qty" value="0" min="0"></label>
+          <label class="form-field">불량 코드<input name="defect_code" list="defects"></label>
+          <label class="form-field">작업자<input name="operator"></label>
+          <label class="form-field">결과<select name="result"><option>Pass</option><option>Rework</option><option>Fail</option></select></label>
+        </div>
+        <div class="form-footer"><p class="form-note">스크랩 수량은 재공에서 차감됩니다. Pass 시 다음 공정으로 이동합니다.</p><button type="submit">공정실적 등록</button></div>
+      </form>
+    </div>
+  </details>
+  <section class="data-panel">
+    <div class="panel-header"><h2>생산 흐름 Process Flow</h2></div>
+    <div class="process-flow">
+      {% for s in route %}
+      <div class="flow-node"><strong>{{ s.step_code }}</strong><small>{{ s.step_name }}</small><small class="muted">{{ s.stage }}</small></div>
+      {% if not loop.last %}<span class="flow-arrow" aria-hidden="true">→</span>{% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  <section class="data-panel">
+    <div class="panel-header"><h2>최근 공정실적 Recent Results</h2><span class="panel-meta">{{ results|length }} records</span></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>로트</th><th>공정</th><th class="numeric">투입</th><th class="numeric">산출</th><th class="numeric">스크랩</th><th>불량 코드</th><th>결과</th></tr></thead><tbody>
+    {% for r in results %}<tr>
+      <td class="mono">{{ r.id }}</td>
+      <td><a class="mono" href="/lots/{{ r.lot_id }}">{{ r.lot_id }}</a></td>
+      <td>{{ r.step_code }}</td>
+      <td class="numeric">{{ r.in_qty }}</td>
+      <td class="numeric">{{ r.out_qty }}</td>
+      <td class="numeric">{{ r.scrap_qty }}</td>
+      <td>{{ r.defect_code or "" }}</td>
+      <td><span class="badge badge-{{ r.result|lower }}">{{ r.result }}</span></td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="empty-state">공정 실적이 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
+{% endblock %}

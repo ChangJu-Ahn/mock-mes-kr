@@ -1,0 +1,50 @@
+# Reference / CI documentation of the runtime topology.
+# NOTE: Docker is not used for local dev in this project (verify with uvicorn
+# directly). This mirrors the Azure Container Apps layout: an init container
+# seeds a shared volume, then api + mcp run against it behind a Caddy proxy that
+# exposes a single port (8080).
+
+services:
+  init:
+    build: .
+    command: ["python", "-m", "mes_core.seed"]
+    environment:
+      MES_DB_PATH: /data/mes.db
+    volumes:
+      - mesdata:/data
+
+  api:
+    build: .
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      MES_DB_PATH: /data/mes.db
+    volumes:
+      - mesdata:/data
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  mcp:
+    build: .
+    command: ["python", "-m", "mcp_server"]
+    environment:
+      MES_DB_PATH: /data/mes.db
+    volumes:
+      - mesdata:/data
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  proxy:
+    build: ./proxy
+    ports:
+      - "8080:8080"
+    environment:
+      API_UPSTREAM: api:8000
+      MCP_UPSTREAM: mcp:8001
+    depends_on:
+      - api
+      - mcp
+
+volumes:
+  mesdata:

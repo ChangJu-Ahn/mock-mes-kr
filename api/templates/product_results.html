@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}제품실적 · Mock MES{% endblock %}
+{% block breadcrumb %}재고관리 / <strong>제품실적</strong>{% endblock %}
+{% block content %}
+<div data-page="product-results">
+  <header class="page-header"><div><p class="page-eyebrow">Inventory</p><h1>제품실적</h1><p class="page-description">수동 제품실적을 입력하고 자동·수동 실적을 조회합니다. · Product Results</p></div><div class="page-actions"><button type="button" data-open-panel="manual-result">+ 수동 입력</button></div></header>
+  <details class="action-panel" id="manual-result">
+    <summary><span><strong>수동 제품실적 입력</strong><small>Manual product result</small></span></summary>
+    <div class="action-body">
+      <form method="post" action="/product-results">
+        <datalist id="lot_ids">{% for l in lot_ids %}<option value="{{ l }}">{% endfor %}</datalist>
+        <div class="form-grid">
+          <label class="form-field">로트 ID <span class="required">*</span><input name="lot_id" list="lot_ids" required></label>
+          <label class="form-field">유형 <span class="required">*</span><select name="item_type"><option>FIN</option><option>SEMI</option></select></label>
+          <label class="form-field">양품 수량 <span class="required">*</span><input type="number" name="good_qty" min="0" required></label>
+          <label class="form-field">스크랩<input type="number" name="scrap_qty" value="0" min="0"></label>
+        </div>
+        <div class="form-footer"><p class="form-note">수동 입력 실적은 source가 MANUAL로 기록됩니다.</p><button type="submit">실적 등록</button></div>
+      </form>
+    </div>
+  </details>
+  <form method="get" action="/product-results" class="filter-bar">
+    <label class="form-field">제품<input name="product_code" value="{{ filters.product_code }}"></label>
+    <label class="form-field">유형<input name="item_type" value="{{ filters.item_type }}" list="types"></label>
+    <datalist id="types"><option>SEMI</option><option>FIN</option></datalist>
+    <label class="form-field">출처<input name="source" value="{{ filters.source }}" list="sources"></label>
+    <datalist id="sources"><option>AUTO_FAB</option><option>AUTO_PACK</option><option>MANUAL</option></datalist>
+    <button type="submit">필터 적용</button>
+  </form>
+  <section class="data-panel">
+    <div class="panel-header"><h2>제품실적 목록</h2><span class="panel-meta">{{ rows|length }} records</span></div>
+    <div class="table-wrap"><table><thead><tr><th>날짜</th><th>로트</th><th>제품</th><th>유형</th><th class="numeric">양품</th><th class="numeric">스크랩</th><th class="numeric">수율</th><th>출처</th></tr></thead><tbody>
+    {% for r in rows %}<tr>
+      <td>{{ r.result_date }}</td>
+      <td>{{ r.lot_id or "—" }}</td>
+      <td><strong>{{ r.product_code }}</strong> <span class="muted">{{ r.product_name or "" }}</span></td>
+      <td><span class="badge badge-{{ r.item_type|lower }}">{{ r.item_type }}</span></td>
+      <td class="numeric">{{ r.good_qty }}</td>
+      <td class="numeric">{{ r.scrap_qty }}</td>
+      <td class="numeric">{{ r.yield_pct }}%</td>
+      <td><span class="badge badge-{{ r.source|lower }}">{{ r.source }}</span></td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="empty-state">조건에 맞는 실적이 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
+{% endblock %}

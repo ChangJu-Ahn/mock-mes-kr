@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}사용법 · Mock MES{% endblock %}
+{% block breadcrumb %}도움말 / <strong>사용법</strong>{% endblock %}
+{% block content %}
+<div data-page="guide">
+  <section class="guide-hero">
+    <p class="page-eyebrow">How to use Mock MES</p>
+    <h1>반도체 생산 흐름을 한 번에 데모하세요</h1>
+    <p>하나의 SQLite 데이터베이스를 웹 콘솔, REST API, MCP 서버가 함께 사용합니다. 웹에서 사람이 입력한 결과와 에이전트가 처리한 결과가 같은 로트·재고·실적에 반영됩니다.</p>
+    <div class="page-actions"><a class="button" href="/lots">로트 투입 시작</a><a class="button button-secondary" href="/api/docs">API 문서 열기</a></div>
+  </section>
+  <section>
+    <div class="panel-header"><h2>전체 생산 흐름</h2><span class="panel-meta">FAB → SEMI → Packaging → FIN</span></div>
+    <div class="guide-steps">
+      <article class="guide-step"><h3>로트 투입</h3><p>제품과 웨이퍼 수량을 선택해 새 FAB 로트를 시작합니다.</p></article>
+      <article class="guide-step"><h3>FAB 공정실적</h3><p>DIFF부터 TEST까지 8개 공정을 기록하며 BOM 자재와 불량을 반영합니다.</p></article>
+      <article class="guide-step"><h3>SEMI 자동 입고</h3><p>TEST Pass 시 로트가 Done이 되고 반제품과 AUTO_FAB 실적이 생성됩니다.</p></article>
+      <article class="guide-step"><h3>패키징</h3><p>SEMI를 소비하고 PKG BOM 자재를 차감해 완제품을 생산합니다.</p></article>
+      <article class="guide-step"><h3>FIN 완제품</h3><p>FIN 재고와 AUTO_PACK 제품실적이 생성되며 원본 로트까지 추적됩니다.</p></article>
+    </div>
+  </section>
+  <div class="grid-3">
+    <section class="panel"><div class="panel-header"><h2>웹 콘솔</h2><span class="badge badge-running">HUMAN</span></div><p>대시보드와 모든 조회·입력 화면을 사용합니다. 인증 헤더가 필요하지 않습니다.</p><a href="/">대시보드 열기 →</a></section>
+    <section class="panel"><div class="panel-header"><h2>REST API</h2><span class="badge badge-auto_fab">AGENT</span></div><p>Product · Material · BOM 조회와 트랜잭션을 제공합니다.</p><p><code>X-API-Key: changjuahn</code></p><a href="/api/docs">/api/docs 열기 →</a></section>
+    <section class="panel"><div class="panel-header"><h2>MCP 서버</h2><span class="badge badge-auto_pack">AGENT</span></div><p>Process · Lot 도구를 streamable HTTP로 제공합니다.</p><p><code>/mcp</code> · 같은 API 키 헤더 사용</p></section>
+  </div>
+  <section class="panel"><div class="panel-header"><h2>에이전트 연결 예시</h2><span class="panel-meta">REST + MCP</span></div>
+    <pre>curl -H "X-API-Key: changjuahn" https://&lt;fqdn&gt;/api/product-inventory
+
+MCP endpoint: https://&lt;fqdn&gt;/mcp
+Header: X-API-Key: changjuahn
+Transactions: start_lot, register_process_result
+Queries: get_lot, list_lots, get_process_route, list_process_results, get_wip</pre>
+  </section>
+</div>
+{% endblock %}

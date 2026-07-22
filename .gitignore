@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# SQLite / data
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Azure deploy artifacts
+infra/*.out.json

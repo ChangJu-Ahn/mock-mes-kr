@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}설비 현황 · Mock MES{% endblock %}
+{% block breadcrumb %}마스터 / <strong>설비</strong>{% endblock %}
+{% block content %}
+<div data-page="equipment">
+  <header class="page-header">
+    <div>
+      <p class="page-eyebrow">Equipment Status</p>
+      <h1>설비 현황</h1>
+      <p class="page-description">FAB 및 패키징 설비의 가동 상태를 확인합니다.</p>
+    </div>
+  </header>
+  <section class="panel">
+    <div class="panel-header"><h2>설비 상태</h2><span class="panel-meta">Equipment Summary</span></div>
+    <div class="summary-grid">
+      <article class="summary-card">
+        <span>가동</span>
+        <strong>{{ rows|selectattr("status", "equalto", "Run")|list|length }}</strong>
+        <small class="badge badge-run">Run</small>
+      </article>
+      <article class="summary-card">
+        <span>대기</span>
+        <strong>{{ rows|selectattr("status", "equalto", "Idle")|list|length }}</strong>
+        <small class="badge badge-idle">Idle</small>
+      </article>
+      <article class="summary-card">
+        <span>고장</span>
+        <strong>{{ rows|selectattr("status", "equalto", "Down")|list|length }}</strong>
+        <small class="badge badge-down">Down</small>
+      </article>
+    </div>
+  </section>
+  <section class="data-panel">
+    <div class="panel-header"><h2>설비 목록</h2><span class="panel-meta">{{ rows|length }} 대</span></div>
+    <div class="table-wrap">
+      <table><thead><tr><th>설비 ID</th><th>설비명</th><th>유형</th><th>상태</th></tr></thead><tbody>
+      {% for r in rows %}<tr><td><strong>{{ r.eqp_id }}</strong></td><td>{{ r.eqp_name }}</td><td>{{ r.type }}</td><td><span class="badge badge-{{ r.status|lower }}">{{ r.status }}</span></td></tr>
+      {% else %}<tr><td colspan="4" class="empty-state">등록된 설비가 없습니다.</td></tr>{% endfor %}
+      </tbody></table>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}BOM · Mock MES{% endblock %}
+{% block breadcrumb %}마스터 / <strong>BOM</strong>{% endblock %}
+{% block content %}
+<div data-page="bom">
+  <header class="page-header"><div><p class="page-eyebrow">Master</p><h1>BOM</h1><p class="page-description">제품별 공정 단계의 자재 소요량을 관리합니다. · Bill of Materials</p></div><div class="page-actions"><button type="button" data-open-panel="bom-upsert">+ BOM 입력</button></div></header>
+  <details class="action-panel" id="bom-upsert">
+    <summary><span><strong>BOM 입력/수정</strong><small>Upsert BOM entry</small></span></summary>
+    <div class="action-body">
+      <form method="post" action="/bom">
+        <datalist id="steps">{% for s in steps %}<option value="{{ s }}">{% endfor %}</datalist>
+        <datalist id="mats">{% for m in materials %}<option value="{{ m.material_code }}">{% endfor %}</datalist>
+        <div class="form-grid">
+          <label class="form-field">제품 <span class="required">*</span><select name="product_code" required>{% for p in products %}<option value="{{ p.product_code }}">{{ p.product_code }}</option>{% endfor %}</select></label>
+          <label class="form-field">공정 <span class="required">*</span><input name="step_code" list="steps" required></label>
+          <label class="form-field">자재 <span class="required">*</span><input name="material_code" list="mats" required></label>
+          <label class="form-field">단위 소요량 <span class="required">*</span><input type="number" step="any" name="qty_per_wafer" min="0" required></label>
+          <label class="form-field">UoM<input name="uom"></label>
+        </div>
+        <div class="form-footer"><p class="form-note">동일 제품·공정·자재 조합이 있으면 수정되고, 없으면 신규 등록됩니다.</p><button type="submit">BOM 저장</button></div>
+      </form>
+    </div>
+  </details>
+  <form method="get" action="/bom" class="filter-bar">
+    <label class="form-field">제품<input name="product_code" value="{{ filters.product_code }}"></label>
+    <label class="form-field">공정<input name="step_code" value="{{ filters.step_code }}"></label>
+    <button type="submit">필터 적용</button>
+  </form>
+  <section class="data-panel">
+    <div class="panel-header"><h2>BOM 목록</h2><span class="panel-meta">{{ rows|length }} entries</span></div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>제품</th><th>공정</th><th>자재</th><th class="numeric">단위 소요</th><th>UoM</th><th></th></tr></thead><tbody>
+    {% for r in rows %}<tr>
+      <td class="mono">{{ r.id }}</td>
+      <td><strong>{{ r.product_code }}</strong></td>
+      <td>{{ r.step_code }} <span class="muted">{{ r.step_name or "" }}</span></td>
+      <td>{{ r.material_code }} <span class="muted">{{ r.material_name or "" }}</span></td>
+      <td class="numeric">{{ r.qty_per_wafer }}</td>
+      <td>{{ r.uom or "" }}</td>
+      <td><form method="post" action="/bom/{{ r.id }}/delete"><button type="submit" class="button-danger" aria-label="BOM {{ r.id }} 삭제">삭제</button></form></td>
+    </tr>
+    {% else %}<tr><td colspan="7" class="empty-state">BOM 데이터가 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
+</div>
+{% endblock %}

@@ -352,3 +352,42 @@ Re-seeded on every cold start (deterministic):
 
 > **Note:** the database is ephemeral. All data above is re-created identically
 > on every cold start. Do not store anything you need to keep.
+
+### Data durability and what can delete it
+
+External demos connect to this MES **by identifier** (`LOT0001`, `LX9`,
+`RAW-WAFER-300`, …), so it matters exactly what can make an identifier
+disappear. Two things delete data, and the second is the one that actually
+fires in normal operation:
+
+| | What it removes | Trigger | Auth |
+| --- | --- | --- | --- |
+| `db.delete_bom()` | one BOM row | `DELETE /api/bom/{id}` | API key |
+| ″ | ″ | `POST /bom/{id}/delete` (console button) | **none** |
+| `db.reset_db()` | **every row in all 9 tables** | seed init container, **every replica start** | n/a |
+
+Nothing else deletes anything. There is no delete path for products,
+materials, lots, process results, inventory, equipment or process steps; **no
+MCP tool deletes anything** (all seven are read/create, so an autonomous agent
+cannot destroy demo state); and there is no scheduler, TTL or background
+cleanup.
+
+**Why the routine total wipe is safe:** `seed()` is deterministic
+(`random.Random(42)`, fixed master data, sequential lot ids), so a wipe is a
+no-op on identifiers — the same key set comes back every time, including BOM
+ids, because `reset_db()` also clears `sqlite_sequence` so `AUTOINCREMENT`
+restarts at 1. The practical consequence:
+
+- **Seeded keys survive indefinitely.** Safe to hard-code in an external test.
+- **Anything created during a session does not.** A lot started via `start_lot`
+  is gone at the next cold start (scale-to-zero makes that routine).
+
+This also means the open console delete is self-healing: a BOM removed there
+reappears on the next restart. Making storage persistent would *invert* that —
+a deletion would become permanent — so the ephemeral volume is deliberate, not
+an oversight.
+
+`KeyStabilityTests` and `DeletionSurfaceTests` pin all of this: the exact key
+baseline, that re-seeding after a mutation restores it identically, and that
+BOM stays the only deletable entity. Adding a delete path or making the seed
+non-reproducible fails CI.

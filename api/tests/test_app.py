@@ -524,3 +524,60 @@ class McpSpecUnitTests(unittest.TestCase):
             self.assertTrue(tool["returns"], f"{tool['name']} is missing a 'returns' note")
             self.assertNotEqual(tool["group"], "기타 (Other)", tool["name"])
             self.assertTrue(tool["summary"], tool["name"])
+
+
+class DeletionSurfaceTests(unittest.TestCase):
+    """Guards how much of this MES can be destroyed.
+
+    External demos connect to this MES by identifier, so the set of things that
+    can delete data is a contract, not an implementation detail. BOM is the only
+    entity with a delete path; if anyone adds one for lots, products, materials
+    or process results, these tests fail and the decision has to be deliberate.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MES_DB_PATH"] = os.path.join(os.getcwd(), "data", "mes_delete_unittest.db")
+        from mes_core import db, seed
+        db.reset_db()
+        seed.seed()
+        from api.main import app
+        cls.app = app
+        cls.open_client = TestClient(app)  # no key
+
+    @classmethod
+    def tearDownClass(cls):
+        for suffix in ("", "-shm", "-wal"):
+            path = os.environ["MES_DB_PATH"] + suffix
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_bom_is_the_only_deletable_entity_over_http(self):
+        # Inspect the routers we define rather than app.routes: FastAPI wraps
+        # included routers (_IncludedRouter) and the shape of that wrapper is an
+        # internal detail that changes between versions.
+        from api.rest import router as rest_router
+        from api.web import router as web_router
+        deleting = sorted(
+            f"{method} {route.path}"
+            for router in (rest_router, web_router)
+            for route in router.routes
+            for method in (getattr(route, "methods", None) or set())
+            if method == "DELETE" or route.path.endswith("/delete")
+        )
+        self.assertEqual(deleting, ["DELETE /api/bom/{bom_id}", "POST /bom/{bom_id}/delete"])
+
+    def test_the_data_layer_exposes_exactly_one_row_delete(self):
+        from mes_core import db
+        self.assertEqual(sorted(n for n in dir(db) if n.startswith("delete_")), ["delete_bom"])
+
+    def test_no_mcp_tool_can_delete_anything(self):
+        # The MCP surface is the one agents drive autonomously, so it must stay
+        # read/create only -- an agent must not be able to destroy demo keys.
+        import asyncio
+        from mcp_server.server import mcp
+        for tool in asyncio.run(mcp.list_tools()):
+            self.assertNotRegex(tool.name, r"delete|remove|drop|reset|purge|clear")
+
+    def test_rest_delete_requires_the_api_key(self):
+        self.assertEqual(self.open_client.delete("/api/bom/1").status_code, 401)

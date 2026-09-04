@@ -470,5 +470,91 @@ class SeedTests(unittest.TestCase):
         self.assertEqual(sum(w["lot_count"] for w in wip), 10)  # 2 Hold + 8 Running
 
 
+class KeyStabilityTests(unittest.TestCase):
+    """The seed's key set is a public contract.
+
+    The deployed app stores its SQLite DB on an ephemeral EmptyDir volume and
+    re-runs ``mes_core.seed`` from an init container on every replica start, so
+    with scale-to-zero the whole database is wiped and rebuilt routinely. That
+    is only safe because ``seed()`` is deterministic (``random.Random(42)``):
+    the same identifiers come back every time.
+
+    External demos connect to this MES by those identifiers, so anything that
+    makes the seed non-reproducible -- dropping the fixed RNG seed, renaming a
+    product, changing the lot count -- would silently break them on the next
+    cold start. These tests turn that implicit property into an enforced one.
+    """
+
+    DB = Path(__file__).resolve().parents[1] / "data" / "mes_key_stability_test.db"
+
+    LOTS = tuple(f"LOT{i:04d}" for i in range(1, 17))
+    PRODUCTS = ("DDR5", "LX9", "NAND", "PMIC")
+    MATERIALS = ("BOND-WIRE", "DOPANT-B", "GAS-AR", "GAS-SIH4", "MOLD-EMC", "PR-EUV",
+                 "RAW-WAFER-300", "RETICLE-5NM", "SLURRY-CMP", "SOLDER-BALL",
+                 "SUBSTRATE", "TARGET-CU")
+    STEPS = ("DIFF", "PHOTO", "ETCH", "IMPL", "CVD", "CMP", "METRO", "TEST", "PKG")
+    EQUIPMENT = ("EQP-CMP01", "EQP-CVD01", "EQP-DIFF01", "EQP-ETCH01", "EQP-IMPL01",
+                 "EQP-PHOT01", "EQP-PHOT02", "EQP-PKG01", "EQP-TEST01")
+    BOM_IDS = tuple(range(1, 49))
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MES_DB_PATH"] = str(cls.DB)
+        cls.DB.parent.mkdir(exist_ok=True)
+        from mes_core import db, seed
+        importlib.reload(db)
+        importlib.reload(seed)
+        cls.db, cls.seed = db, seed
+
+    @classmethod
+    def tearDownClass(cls):
+        for f in cls.DB.parent.glob(cls.DB.name + "*"):
+            f.unlink(missing_ok=True)
+
+    def _keys(self) -> dict[str, list]:
+        db = self.db
+        return {
+            "lots": sorted(l["lot_id"] for l in db.list_lots()),
+            "products": sorted(p["product_code"] for p in db.list_products()),
+            "materials": sorted(m["material_code"] for m in db.list_materials()),
+            "steps": db.list_step_codes(),
+            "equipment": sorted(e["eqp_id"] for e in db.list_equipment()),
+            "bom": sorted(b["id"] for b in db.list_bom()),
+        }
+
+    def test_seed_produces_the_documented_key_baseline(self):
+        self.seed.seed()
+        keys = self._keys()
+        self.assertEqual(keys["lots"], list(self.LOTS))
+        self.assertEqual(keys["products"], sorted(self.PRODUCTS))
+        self.assertEqual(keys["materials"], sorted(self.MATERIALS))
+        self.assertEqual(keys["steps"], list(self.STEPS))  # route order matters
+        self.assertEqual(keys["equipment"], sorted(self.EQUIPMENT))
+        self.assertEqual(keys["bom"], list(self.BOM_IDS))
+
+    def test_reseeding_after_mutation_restores_identical_keys(self):
+        """Simulates an ACA cold start: wipe + re-seed must be a no-op on keys."""
+        self.seed.seed()
+        before = self._keys()
+
+        # Mutate the way a demo would: add a lot, delete a BOM row.
+        self.db.start_lot("LX9", 25)
+        self.db.delete_bom(before["bom"][0])
+        self.assertNotEqual(self._keys(), before)
+
+        self.seed.seed()
+        self.assertEqual(self._keys(), before)
+
+    def test_bom_ids_are_stable_because_autoincrement_is_reset(self):
+        # BOM is the only deletable entity, and it is keyed by AUTOINCREMENT.
+        # reset_db() clears sqlite_sequence, so ids restart at 1 -- without that,
+        # every re-seed would hand out fresh ids and break BOM-keyed demos.
+        self.seed.seed()
+        first = sorted(b["id"] for b in self.db.list_bom())
+        self.seed.seed()
+        self.assertEqual(sorted(b["id"] for b in self.db.list_bom()), first)
+        self.assertEqual(first[0], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

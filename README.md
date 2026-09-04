@@ -201,6 +201,14 @@ Desktop (via `mcp-remote`), the Python SDK, and `curl`.
 A test asserts that every tool the server exposes is documented, so adding a
 tool without documenting it fails CI.
 
+The connection URLs on the page are published as `https://` for any non-local
+host. Caddy listens on plaintext `:8080` and rewrites `X-Forwarded-Proto` to its
+own listener's scheme, so the request scheme reaching uvicorn is always `http`;
+echoing it back would hand out URLs that ACA (`allowInsecure: false`) redirects,
+and a redirected JSON-RPC `POST` breaks MCP clients and `curl -sN`. Set
+`MES_PUBLIC_BASE_URL` (e.g. `https://mes.example.com`) to override the origin
+outright when running behind a different proxy or on a sub-path.
+
 ---
 
 ## Agent connection examples

@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -401,6 +402,21 @@ class McpDocsTests(unittest.TestCase):
                       "tools/call", "tools/list", "mcp-remote", "streamablehttp_client",
                       "http://testserver/mcp"):
             self.assertIn(token, html, token)
+
+    def test_connection_urls_are_https_for_a_public_host(self):
+        # Caddy listens on plaintext :8080 and rewrites X-Forwarded-Proto, so the
+        # request scheme is always http in ACA. Publishing http:// would hand out
+        # URLs that ACA (allowInsecure: false) redirects, breaking POSTed JSON-RPC.
+        host = "mock-mes.example.azurecontainerapps.io"
+        html = self.client.get("/mcp-docs", headers={"Host": host}).text
+        self.assertIn(f"https://{host}/mcp", html)
+        self.assertNotIn(f"http://{host}", html)
+
+    def test_public_base_url_can_be_overridden(self):
+        with mock.patch.dict(os.environ, {"MES_PUBLIC_BASE_URL": "https://mes.example.com/"}):
+            html = self.client.get("/mcp-docs").text
+        self.assertIn("https://mes.example.com/mcp", html)
+        self.assertNotIn("http://testserver/mcp", html)
 
     def test_docs_page_documents_parameters_and_defaults(self):
         html = self.client.get("/mcp-docs").text

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any
 
@@ -290,6 +291,32 @@ def guide(request: Request):
 # MCP 문서 (the agent surface Swagger cannot describe)
 # --------------------------------------------------------------------------- #
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "testserver"}
+
+
+def _public_base_url(request: Request) -> str:
+    """The URL a client outside the container should paste into its MCP config.
+
+    ``request.base_url`` cannot be trusted for the scheme here. Caddy listens on
+    plaintext ``:8080`` and rewrites ``X-Forwarded-Proto`` to its own listener's
+    scheme (it only preserves the incoming value for a trusted proxy, and we
+    declare none), so ACA's ``https`` is lost and uvicorn always sees ``http``.
+    Publishing ``http://`` would hand out URLs that ACA redirects, and a
+    redirected JSON-RPC POST breaks MCP clients and the documented ``curl -sN``.
+
+    So: honour an explicit override, otherwise assume any non-local host is
+    served over TLS, which is true for ACA ingress (``allowInsecure: false``).
+    """
+    override = os.getenv("MES_PUBLIC_BASE_URL")
+    if override:
+        return override.rstrip("/")
+
+    url = request.base_url
+    hostname = (url.hostname or "").lower()
+    scheme = url.scheme if hostname in _LOCAL_HOSTS or hostname.endswith(".local") else "https"
+    return str(url.replace(scheme=scheme)).rstrip("/")
+
+
 @router.get("/mcp-docs")
 def mcp_docs(request: Request):
     """Human-readable reference for the MCP surface, the sibling of /api/docs.
@@ -299,7 +326,7 @@ def mcp_docs(request: Request):
     """
     return templates.TemplateResponse(
         request, "mcp_docs.html",
-        _context(request, spec=mcp_spec.build_spec(), base_url=str(request.base_url).rstrip("/")))
+        _context(request, spec=mcp_spec.build_spec(), base_url=_public_base_url(request)))
 
 
 @router.get("/mcp-docs.json")

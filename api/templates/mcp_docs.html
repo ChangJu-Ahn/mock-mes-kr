@@ -227,14 +227,18 @@ curl -s {{ base_url }}{{ spec.spec_path }}</pre></div>
   });
 
   document.querySelectorAll("[data-copy]").forEach((button) => {
+    // Captured once, before any click can overwrite it: reading the label after
+    // the await would latch "복사됨" on a rapid second click and never revert.
+    const original = button.textContent;
+    let revert;
     button.addEventListener("click", async () => {
       const code = button.parentElement?.querySelector("pre");
       if (!code) return;
       try {
         await navigator.clipboard.writeText(code.textContent ?? "");
-        const original = button.textContent;
         button.textContent = "복사됨";
-        setTimeout(() => { button.textContent = original; }, 1200);
+        clearTimeout(revert);
+        revert = setTimeout(() => { button.textContent = original; }, 1200);
       } catch { /* clipboard blocked (http / permissions) — ignore */ }
     });
   });

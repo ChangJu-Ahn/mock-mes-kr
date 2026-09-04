@@ -10,7 +10,7 @@ exposed through **three surfaces**:
 | --- | --- | --- | --- |
 | **Web console** | Human | `/` | All MES functions (view + input) + dashboard |
 | **REST API** | Agent / key | `/api` (docs: `/api/docs`) | Product · Material · BOM |
-| **MCP server** | Agent / key | `/mcp` (streamable HTTP) | Process · Lot |
+| **MCP server** | Agent / key | `/mcp` (docs: `/mcp-docs`) | Process · Lot |
 
 > **MVP / demo only.** The database is **ephemeral** and **re-seeded on every
 > cold start**, so every demo run gets a fresh, identical fab snapshot. A single
@@ -138,6 +138,7 @@ flowchart LR
 | WIP | `/wip` | Non-Done lots grouped by step |
 | Equipment | `/equipment` | Equipment list |
 | Guide | `/guide` | Step-by-step usage walkthrough |
+| MCP docs | `/mcp-docs` | MCP tool reference + client config (see below) |
 
 ### REST API — `/api` (requires `X-API-Key: changjuahn`)
 
@@ -145,7 +146,7 @@ Interactive docs at **`/api/docs`** (open — no key needed to browse).
 
 | Method | Endpoint | 기능 |
 | --- | --- | --- |
-| `GET` | `/api` | Index + endpoint list |
+| `GET` | `/api` | Index + endpoint list + pointer to the MCP surface |
 | `GET` | `/api/health` | DB status + row counts |
 | `GET` | `/api/products` | Product list |
 | `GET` | `/api/product-inventory` | SEMI / FIN stock (`?product_code`, `?item_type`) |
@@ -172,6 +173,33 @@ Streamable HTTP (`stateless_http=True`). Seven tools:
 | `get_process_route` | Route steps (step_code?, eqp_type?, stage?) |
 | `list_process_results` | Process results (lot_id?, step_code?, result?, has_scrap?, ...) |
 | `get_wip` | Non-Done lots grouped by current step (step_code?) |
+
+> **Lot history is MCP-only.** There is deliberately no `GET /api/lots`; a human
+> reads a lot's step history at `/lots/{lot_id}` in the web console, and an agent
+> reads it with the `get_lot` tool.
+
+#### MCP docs — `/mcp-docs` + `/mcp-docs.json` (open, no key)
+
+Swagger can only describe the REST half, which made the MCP surface invisible to
+anyone browsing the site. The console therefore ships its own MCP reference,
+mirroring the REST pair:
+
+| | REST | MCP |
+| --- | --- | --- |
+| Human docs | `/api/docs` | **`/mcp-docs`** |
+| Machine spec | `/api/openapi.json` | **`/mcp-docs.json`** |
+
+`api/mcp_spec.py` builds both by calling `FastMCP.list_tools()` on the very same
+`mcp_server.server.mcp` object the MCP container serves — a local registry
+lookup, no network hop — so the page cannot drift from the running server. The
+page renders, per tool: signature, Korean/English description, a parameter table
+(type · required · default) derived from the live JSON Schema, the return shape,
+behavioural rules, a ready-to-paste `tools/call` envelope, and the raw
+`inputSchema`. It also carries copy-paste client configs for VS Code, Claude
+Desktop (via `mcp-remote`), the Python SDK, and `curl`.
+
+A test asserts that every tool the server exposes is documented, so adding a
+tool without documenting it fails CI.
 
 ---
 
@@ -216,6 +244,7 @@ asyncio.run(main())
 
 Popular MCP clients (e.g. Claude Desktop, VS Code) can point directly at
 `https://<fqdn>/mcp` (transport: streamable HTTP) with header `X-API-Key: changjuahn`.
+Ready-to-paste config for each client is on **`https://<fqdn>/mcp-docs`**.
 
 ---
 

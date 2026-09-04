@@ -6,6 +6,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette import status
 
+from api import mcp_spec
 from mes_core import db
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -283,3 +284,25 @@ def equipment(request: Request):
 @router.get("/guide")
 def guide(request: Request):
     return templates.TemplateResponse(request, "guide.html", _context(request))
+
+
+# --------------------------------------------------------------------------- #
+# MCP 문서 (the agent surface Swagger cannot describe)
+# --------------------------------------------------------------------------- #
+
+@router.get("/mcp-docs")
+def mcp_docs(request: Request):
+    """Human-readable reference for the MCP surface, the sibling of /api/docs.
+
+    Routed to the API container, not the MCP one: Caddy only forwards the exact
+    path ``/mcp`` and the prefix ``/mcp/``, so ``/mcp-docs`` lands here.
+    """
+    return templates.TemplateResponse(
+        request, "mcp_docs.html",
+        _context(request, spec=mcp_spec.build_spec(), base_url=str(request.base_url).rstrip("/")))
+
+
+@router.get("/mcp-docs.json")
+def mcp_docs_json() -> dict[str, Any]:
+    """Machine-readable MCP tool spec — the ``/api/openapi.json`` of the MCP side."""
+    return mcp_spec.build_raw_spec()

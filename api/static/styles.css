@@ -199,3 +199,43 @@ pre { overflow-x: auto; padding: 1rem; border-radius: var(--radius-sm); backgrou
 .badge-hot { background: var(--danger-soft); color: var(--danger); }
 .badge-normal { background: var(--primary-soft); color: var(--primary); }
 .badge-low { background: #f1f5f9; color: #475569; }
+
+/* --- MCP docs (/mcp-docs) ------------------------------------------------- */
+.badge-write { background: #ede9fe; color: #6d28d9; }
+.badge-read { background: #e0f2fe; color: #075985; }
+.doc-wrap { overflow-wrap: anywhere; font-size: .78rem; }
+.doc-tablist { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .85rem; border-bottom: 1px solid var(--line); }
+.doc-tab { padding: .5rem .8rem; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: .8rem; font-weight: 700; cursor: pointer; }
+.doc-tab:hover { color: var(--text); }
+.doc-tab.is-active { border-bottom-color: var(--primary); color: var(--primary); }
+.doc-tabpanel { display: none; }
+.doc-tabpanel.is-active { display: block; }
+.code-block { position: relative; margin: .5rem 0 0; }
+.code-block pre { margin: 0; padding-right: 5rem; }
+.copy-btn { position: absolute; top: .55rem; right: .55rem; z-index: 1; padding: .3rem .55rem; border: 1px solid rgba(148,163,184,.35); border-radius: var(--radius-sm); background: rgba(148,163,184,.14); color: #dbeafe; font-size: .68rem; font-weight: 700; cursor: pointer; }
+.copy-btn:hover { background: rgba(148,163,184,.28); }
+.doc-toc { display: flex; flex-wrap: wrap; gap: .45rem; }
+.doc-chip { display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .6rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-soft); color: var(--text); font-size: .76rem; }
+.doc-chip:hover { border-color: #93c5fd; background: var(--primary-soft); }
+.tool-card { scroll-margin-top: 4.5rem; }
+.tool-card:target { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+.tool-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+.tool-sig { margin: 0; font-size: .95rem; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.tool-args { color: var(--muted); font-weight: 400; }
+.tool-label { margin: .2rem 0 0; color: var(--primary); font-size: .75rem; font-weight: 700; }
+.tool-subhead { margin: 1rem 0 .4rem; color: var(--muted); font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.tool-notes { margin: 0; padding-left: 1.1rem; color: var(--muted); font-size: .78rem; }
+.tool-notes li { margin-bottom: .2rem; }
+.tool-schema { margin-top: 1rem; }
+.tool-schema > summary { color: var(--muted); font-size: .78rem; cursor: pointer; }
+.param-table { min-width: 520px; }
+/* Long identifiers (tool signatures, step chains, URLs) must never widen the page. */
+[data-page="mcp-docs"] .page-description,
+[data-page="mcp-docs"] .form-note,
+[data-page="mcp-docs"] .tool-notes li,
+[data-page="mcp-docs"] .summary-card strong { overflow-wrap: anywhere; }
+
+@media (max-width: 720px) {
+  .tool-head { flex-direction: column; }
+  .doc-tablist { flex-wrap: nowrap; overflow-x: auto; }
+}

@@ -43,6 +43,17 @@ class RestApiTests(unittest.TestCase):
             self.assertIn(p, paths)
         self.assertNotIn("/", paths)
 
+    def test_api_index_advertises_the_mcp_surface(self):
+        # /api is the first thing an agent hits; it must not imply REST is the
+        # whole system, because lot history / process results live on MCP only.
+        mcp = self.client.get("/api").json()["mcp"]
+        self.assertEqual(mcp["endpoint"], "/mcp")
+        self.assertEqual(mcp["docs"], "/mcp-docs")
+        self.assertEqual(mcp["spec"], "/mcp-docs.json")
+        self.assertEqual(mcp["transport"], "streamable-http")
+        for tool in ("get_lot", "list_lots", "list_process_results", "get_wip"):
+            self.assertIn(tool, mcp["tools"])
+
     # --- queries ----------------------------------------------------------- #
     def test_products_and_inventory(self):
         self.assertEqual(len(self.client.get("/api/products").json()), 4)
@@ -113,7 +124,8 @@ class WebConsoleTests(unittest.TestCase):
 
     def test_all_pages_render(self):
         for path in ("/", "/lots", "/process", "/product-inventory",
-                     "/product-results", "/materials", "/bom", "/wip", "/equipment"):
+                     "/product-results", "/materials", "/bom", "/wip", "/equipment",
+                     "/mcp-docs"):
             self.assertEqual(self.client.get(path).status_code, 200, path)
 
     def test_lot_detail_renders(self):
@@ -182,6 +194,7 @@ class WebConsoleTests(unittest.TestCase):
             'id="main-content"',
             'href="/guide"',
             'href="/api/docs"',
+            'href="/mcp-docs"',
         ):
             self.assertIn(token, r.text)
         self.assertRegex(
@@ -340,3 +353,158 @@ class WebConsoleTests(unittest.TestCase):
                 self.assertIn(token, html, f"{path}: {token}")
             self.assertIn('class="action-panel"', html)
             self.assertIn('class="table-wrap"', html)
+
+
+class McpDocsTests(unittest.TestCase):
+    """The MCP surface is only documented here — Swagger cannot describe it."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MES_DB_PATH"] = os.path.join(os.getcwd(), "data", "mes_mcpdocs_unittest.db")
+        from mes_core import db, seed
+        db.reset_db()
+        seed.seed()
+        from api.main import app
+        cls.client = TestClient(app)  # docs are open, like /api/docs
+
+    @classmethod
+    def tearDownClass(cls):
+        for suffix in ("", "-shm", "-wal"):
+            path = os.environ["MES_DB_PATH"] + suffix
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_docs_page_is_open_and_uses_the_shared_shell(self):
+        r = self.client.get("/mcp-docs")
+        self.assertEqual(r.status_code, 200)
+        for token in ('data-page="mcp-docs"', 'class="app-shell"', 'id="main-content"',
+                      'href="/api/docs"', 'href="/mcp-docs.json"'):
+            self.assertIn(token, r.text)
+        self.assertRegex(
+            r.text,
+            r'href="/mcp-docs"[^>]*aria-current="page"|'
+            r'aria-current="page"[^>]*href="/mcp-docs"',
+        )
+
+    def test_docs_page_lists_every_live_mcp_tool(self):
+        from api.mcp_spec import build_spec
+        html = self.client.get("/mcp-docs").text
+        names = build_spec()["tool_names"]
+        self.assertEqual(len(names), 7)
+        for name in names:
+            self.assertIn(f'id="tool-{name}"', html, name)
+            self.assertIn(f'href="#tool-{name}"', html, name)
+
+    def test_docs_page_explains_connection_and_clients(self):
+        html = self.client.get("/mcp-docs").text
+        for token in ("streamable-http", "X-API-Key", "changjuahn", "mock-mes-mcp",
+                      "tools/call", "tools/list", "mcp-remote", "streamablehttp_client",
+                      "http://testserver/mcp"):
+            self.assertIn(token, html, token)
+
+    def test_docs_page_documents_parameters_and_defaults(self):
+        html = self.client.get("/mcp-docs").text
+        # required + optional-with-default params must both be visible
+        for token in ("product_code", "start_qty", "scrap_qty", "has_scrap",
+                      "cumulative_yield", "필수", "선택", "기본값"):
+            self.assertIn(token, html, token)
+
+    def test_docs_page_states_lot_history_is_not_on_rest(self):
+        html = self.client.get("/mcp-docs").text
+        self.assertIn("REST에는 해당 엔드포인트가 없습니다", html)
+        self.assertIn("/lots/{lot_id}", html)
+
+    def test_spec_json_matches_the_running_server(self):
+        r = self.client.get("/mcp-docs.json")
+        self.assertEqual(r.status_code, 200)
+        payload = r.json()
+        self.assertEqual(payload["server"]["name"], "mock-mes-mcp")
+        self.assertEqual(payload["server"]["endpoint"], "/mcp")
+        self.assertEqual(payload["server"]["transport"], "streamable-http")
+        self.assertEqual(payload["server"]["auth"]["header"], "X-API-Key")
+
+        import asyncio
+        from mcp_server.server import mcp
+        live = {t.name for t in asyncio.run(mcp.list_tools())}
+        self.assertEqual({t["name"] for t in payload["tools"]}, live)
+        for tool in payload["tools"]:
+            self.assertTrue(tool["description"])
+            self.assertEqual(tool["inputSchema"]["type"], "object")
+
+    def test_protocol_version_tracks_the_installed_sdk(self):
+        # Hardcoding this drifts: the image pins `mcp>=1.9,<2`, so a rebuild can
+        # bump the revision the server actually negotiates on the wire.
+        from mcp.types import LATEST_PROTOCOL_VERSION
+        payload = self.client.get("/mcp-docs.json").json()
+        self.assertEqual(payload["server"]["protocolVersion"], LATEST_PROTOCOL_VERSION)
+        self.assertIn(LATEST_PROTOCOL_VERSION, self.client.get("/mcp-docs").text)
+
+    def test_spec_json_is_open_but_the_mcp_endpoint_stays_gated(self):
+        # The docs must be browsable without a key, exactly like /api/openapi.json.
+        self.assertEqual(self.client.get("/mcp-docs.json").status_code, 200)
+        self.assertEqual(self.client.get("/mcp-docs").status_code, 200)
+
+    def test_docs_styles_are_shipped(self):
+        css = self.client.get("/static/styles.css").text
+        for token in (".doc-tab", ".tool-card", ".copy-btn", ".code-block", ".param-table"):
+            self.assertIn(token, css, token)
+
+
+class McpSpecUnitTests(unittest.TestCase):
+    """The spec is built from the live registry, so it can never go stale."""
+
+    def test_type_labels_flatten_optional_schemas(self):
+        from api.mcp_spec import _type_label
+        self.assertEqual(_type_label({"type": "string"}), "string")
+        self.assertEqual(
+            _type_label({"anyOf": [{"type": "string"}, {"type": "null"}]}),
+            "string | null")
+        self.assertEqual(_type_label({"type": "array", "items": {"type": "integer"}}),
+                         "array<integer>")
+        self.assertEqual(_type_label(None), "any")
+
+    def test_description_is_split_into_label_and_summary(self):
+        from api.mcp_spec import _split_description
+        label, variant, summary = _split_description(
+            "start_lot", "로트 투입(start_lot): create a new FAB lot.")
+        self.assertEqual(label, "로트 투입")
+        self.assertEqual(variant, "")  # matches the tool name -> not repeated
+        self.assertEqual(summary, "create a new FAB lot.")
+
+        label, variant, _ = _split_description("get_lot", "로트 조회(one): return a lot.")
+        self.assertEqual((label, variant), ("로트 조회", "one"))
+
+        self.assertEqual(_split_description("x", "no pattern here"),
+                         ("", "", "no pattern here"))
+
+    def test_spec_groups_tools_and_flags_writes(self):
+        from api.mcp_spec import build_spec
+        spec = build_spec()
+        self.assertEqual(spec["server_name"], "mock-mes-mcp")
+        self.assertTrue(spec["stateless"])
+        self.assertEqual(spec["write_tools"], ["start_lot", "register_process_result"])
+        self.assertEqual([g["name"] for g in spec["groups"]],
+                         ["로트 (Lot)", "공정 (Process)", "재공 (WIP)"])
+        # every tool is reachable through exactly one group
+        grouped = [t["name"] for g in spec["groups"] for t in g["tools"]]
+        self.assertCountEqual(grouped, spec["tool_names"])
+
+    def test_required_params_sort_first_and_defaults_render(self):
+        from api.mcp_spec import build_spec
+        tool = build_spec()["tools_by_name"]["register_process_result"]
+        params = {p["name"]: p for p in tool["params"]}
+        self.assertEqual([p["name"] for p in tool["params"]][:2], ["lot_id", "step_code"])
+        self.assertTrue(params["lot_id"]["required"])
+        self.assertEqual(params["lot_id"]["default"], "—")
+        self.assertEqual(params["scrap_qty"]["default"], "0")
+        self.assertEqual(params["result"]["default"], '"Pass"')
+        self.assertEqual(params["in_qty"]["type"], "integer | null")
+
+    def test_every_tool_has_curated_docs(self):
+        # A new MCP tool without an entry in _TOOL_META would silently render
+        # with no return description; fail loudly instead.
+        from api.mcp_spec import build_spec
+        for tool in build_spec()["tools"]:
+            self.assertTrue(tool["returns"], f"{tool['name']} is missing a 'returns' note")
+            self.assertNotEqual(tool["group"], "기타 (Other)", tool["name"])
+            self.assertTrue(tool["summary"], tool["name"])

@@ -94,6 +94,17 @@ class AssignTimesTests(unittest.TestCase):
         schedule.assign_times(runs, ANCHOR, random.Random(schedule.SCHEDULE_SEED))
         self.assertEqual(max(_parse(r.out_time) for r in runs), ANCHOR)
 
+    def test_naive_anchor_is_rejected(self):
+        """A naive anchor would be read as local time, silently shifting the
+        whole dataset by the machine's UTC offset -- zero in the container,
+        nine hours on a Seoul laptop. Fail loudly instead."""
+        with self.assertRaises(ValueError):
+            schedule.assign_times(
+                self._runs(),
+                ANCHOR.replace(tzinfo=None),
+                random.Random(schedule.SCHEDULE_SEED),
+            )
+
     def test_every_run_starts_before_it_ends(self):
         runs = self._runs()
         schedule.assign_times(runs, ANCHOR, random.Random(schedule.SCHEDULE_SEED))

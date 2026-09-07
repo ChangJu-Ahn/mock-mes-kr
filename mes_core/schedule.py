@@ -85,7 +85,15 @@ def assign_times(
     lot. Times are computed in minutes from an arbitrary zero, then the whole
     schedule is translated so ``max(out_time) == anchor``. Translating instead
     of clamping is what keeps every run in the past without dropping any.
+
+    ``anchor`` must be timezone-aware. A naive one would reach
+    ``datetime.astimezone`` in :func:`iso`, which reads naive input as *local*
+    time -- a silent shift of the machine's UTC offset, invisible in a UTC
+    container and nine hours wrong on a Seoul laptop.
     """
+    if anchor.tzinfo is None:
+        raise ValueError("anchor must be timezone-aware; got naive %r" % anchor)
+
     runs = list(runs)
     if not runs:
         return {}

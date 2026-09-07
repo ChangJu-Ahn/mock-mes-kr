@@ -425,6 +425,48 @@ class DashboardTests(DbTestBase):
         self.assertEqual(s["wip_total_lots"], sum(w["lot_count"] for w in s["wip_by_step"]))
 
 
+class TimeArgumentTests(DbTestBase):
+    def test_start_lot_accepts_explicit_start_date(self):
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25, start_date="2026-08-30")
+        self.assertEqual(lot["start_date"], "2026-08-30")
+
+    def test_start_lot_defaults_to_today(self):
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25)
+        self.assertRegex(lot["start_date"], r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_process_result_keeps_supplied_times(self):
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25)
+        self.db.register_process_result(
+            lot["lot_id"], "PHOTO", in_qty=25,
+            in_time="2026-08-30T01:00:00+00:00",
+            out_time="2026-08-30T02:00:00+00:00",
+        )
+        rows = self.db.list_process_results(lot_id=lot["lot_id"])
+        self.assertEqual(rows[0]["in_time"], "2026-08-30T01:00:00+00:00")
+        self.assertEqual(rows[0]["out_time"], "2026-08-30T02:00:00+00:00")
+
+    def test_auto_fab_receipt_is_dated_from_out_time(self):
+        """A lot that finished last week must not book its SEMI receipt today."""
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25)
+        self.db.register_process_result(
+            lot["lot_id"], "PHOTO", in_qty=25,
+            in_time="2026-08-30T01:00:00+00:00",
+            out_time="2026-08-30T02:00:00+00:00",
+        )
+        self.db.register_process_result(
+            lot["lot_id"], "TEST", in_qty=25, result="Pass",
+            in_time="2026-08-30T03:00:00+00:00",
+            out_time="2026-08-30T05:00:00+00:00",
+        )
+        auto = self.db.list_product_results(source="AUTO_FAB")
+        self.assertEqual(len(auto), 1)
+        self.assertEqual(auto[0]["result_date"], "2026-08-30")
+
+
 class SeedTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

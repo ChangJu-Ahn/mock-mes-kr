@@ -468,7 +468,7 @@ def _next_lot_id(conn) -> str:
     return f"LOT{n + 1:04d}"
 
 
-def start_lot(product_code, start_qty, priority="Normal", lot_id=None):
+def start_lot(product_code, start_qty, priority="Normal", lot_id=None, start_date=None):
     start_qty = int(start_qty)
     if start_qty <= 0:
         raise ValueError(f"start_qty must be > 0, got {start_qty}")
@@ -487,7 +487,7 @@ def start_lot(product_code, start_qty, priority="Normal", lot_id=None):
             "INSERT INTO lot (lot_id, product_code, tech_node, start_qty, wafer_qty,"
             " priority, current_step, status, start_date) VALUES (?,?,?,?,?,?,?,?,?)",
             (lot_id, product_code, prod["tech_node"], start_qty, start_qty,
-             priority, first["step_code"], "Running", _now_iso()[:10]),
+             priority, first["step_code"], "Running", start_date or _now_iso()[:10]),
         )
     return get_lot(lot_id)
 
@@ -672,7 +672,7 @@ def register_process_result(lot_id, step_code, in_qty=None, scrap_qty=0,
                 start_qty = lot["start_qty"] or (out_qty + cum_scrap)
                 y = round(out_qty / start_qty * 100, 2) if start_qty else 0.0
                 pr_id = _insert_product_result(
-                    conn, result_date=now[:10], lot_id=lot_id, product_code=product_code,
+                    conn, result_date=out_time[:10], lot_id=lot_id, product_code=product_code,
                     item_type="SEMI", good_qty=out_qty, scrap_qty=int(cum_scrap),
                     yield_pct=y, source="AUTO_FAB", eqp_id=eqp_id,
                 )

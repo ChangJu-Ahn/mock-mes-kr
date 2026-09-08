@@ -11,8 +11,9 @@ transaction functions so the snapshot is internally consistent.
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass, field
 
-from . import db
+from . import db, schedule
 
 # (product_code, product_name, tech_node)
 PRODUCTS = [
@@ -104,6 +105,22 @@ def _scrap_for(step_code: str, in_qty: int, rnd: random.Random) -> int:
     return min(in_qty, rnd.randint(1, 3 if high else 2))
 
 
+@dataclass
+class PlannedRun:
+    """One process result, decided but not yet written or timed."""
+
+    lot_key: int
+    step_code: str
+    eqp_id: str | None
+    in_qty: int
+    scrap_qty: int
+    defect_code: str | None
+    operator: str
+    result: str
+    in_time: str = field(default="")
+    out_time: str = field(default="")
+
+
 def _insert_master() -> None:
     with db.get_conn() as conn:
         conn.executemany("INSERT INTO product VALUES (?,?,?)", PRODUCTS)
@@ -131,46 +148,97 @@ def _insert_master() -> None:
         )
 
 
-def _advance(lot_id: str, upto_idx: int, rnd: random.Random) -> None:
-    """Move a lot through FAB_STEPS[0..upto_idx] inclusive, with occasional scrap."""
+def _plan_advance(lot_key: int, upto_idx: int, start_qty: int,
+                  rnd: random.Random, out: list[PlannedRun]) -> None:
+    """Decide FAB_STEPS[0..upto_idx] for one lot without touching the DB.
+
+    Draw order from ``rnd`` must stay byte-identical to the previous
+    register-as-you-go version: scrap, defect, pass roll, rework pick,
+    equipment, operator. Anything else changes the whole dataset.
+
+    ``wafer_qty`` used to come back from the DB after each write; the DB set it
+    to ``in_qty - scrap_qty``, so tracking it locally is exact.
+    """
+    qty = start_qty
     for idx in range(upto_idx + 1):
         step = FAB_STEPS[idx]
-        lot = db.get_lot(lot_id)
-        in_qty = lot["wafer_qty"]
+        in_qty = qty
         scrap = _scrap_for(step, in_qty, rnd)
         defect = rnd.choice(DEFECTS) if scrap > 0 else None
         result = "Pass" if rnd.random() > 0.05 else rnd.choice(["Rework", "Fail"])
         # ensure the final TEST step passes so Done lots produce SEMI
         if step == "TEST":
             result = "Pass"
-        db.register_process_result(
-            lot_id, step, eqp_id=_pick_eqp(step, rnd), in_qty=in_qty,
-            scrap_qty=scrap, defect_code=defect,
+        out.append(PlannedRun(
+            lot_key=lot_key, step_code=step, eqp_id=_pick_eqp(step, rnd),
+            in_qty=in_qty, scrap_qty=scrap, defect_code=defect,
             operator=rnd.choice(OPERATORS), result=result,
-        )
+        ))
+        qty = in_qty - scrap
 
 
 def seed() -> None:
+    """Build the dataset in three passes.
+
+    1. Decide everything, drawing from ``rnd`` in exactly the historical order,
+       but write nothing -- even creating the lot rows is deferred.
+    2. Lay the decisions out on a clock using a separate generator, so the
+       makespan ends at the anchor and equipment never double-books.
+    3. Replay the decisions into the real transaction functions, oldest first,
+       so row ids track time the way the console assumes they do.
+
+    Pass 2 draws no numbers from ``rnd``, so the ``rnd`` sequence -- and hence
+    the 91 results, 16 lots, defect mix and yields -- is unchanged.
+    """
     rnd = random.Random(42)
+    sched = random.Random(schedule.SCHEDULE_SEED)
+    anchor = schedule.resolve_anchor()
+
     db.reset_db()
     _insert_master()
 
+    # --- pass 1: decide ----------------------------------------------------
+    lot_specs: list[tuple[str, int, str]] = []   # product_code, start_qty, priority
+    planned: list[PlannedRun] = []
+    hold_keys: set[int] = set()
     done_products: list[str] = []
+
     for i in range(1, 17):
         pcode, _pn, _tn = PRODUCTS[(i - 1) % len(PRODUCTS)]
         start_qty = rnd.choice([25, 25, 25, 24, 12])
         priority = rnd.choice(PRIORITIES)
-        lot = db.start_lot(pcode, start_qty, priority=priority)
-        lot_id = lot["lot_id"]
+        lot_specs.append((pcode, start_qty, priority))
         if i <= 6:                       # Done: full FAB route (TEST passes -> SEMI)
-            _advance(lot_id, len(FAB_STEPS) - 1, rnd)
+            _plan_advance(i, len(FAB_STEPS) - 1, start_qty, rnd, planned)
             done_products.append(pcode)
         elif i <= 8:                     # Hold: partway then held
-            _advance(lot_id, rnd.randint(1, 5), rnd)
-            with db.get_conn() as conn:
-                conn.execute("UPDATE lot SET status='Hold' WHERE lot_id=?", (lot_id,))
+            _plan_advance(i, rnd.randint(1, 5), start_qty, rnd, planned)
+            hold_keys.add(i)
         else:                            # Running: partway
-            _advance(lot_id, rnd.randint(0, 6), rnd)
+            _plan_advance(i, rnd.randint(0, 6), start_qty, rnd, planned)
+
+    # --- pass 2: schedule --------------------------------------------------
+    released = schedule.assign_times(planned, anchor, sched)
+
+    # --- pass 3: write -----------------------------------------------------
+    lot_ids: dict[int, str] = {}
+    for i, (pcode, start_qty, priority) in enumerate(lot_specs, start=1):
+        start_date = released.get(i, anchor)
+        lot = db.start_lot(pcode, start_qty, priority=priority,
+                           start_date=schedule.iso(start_date)[:10])
+        lot_ids[i] = lot["lot_id"]
+
+    for run in sorted(planned, key=lambda r: r.out_time):
+        db.register_process_result(
+            lot_ids[run.lot_key], run.step_code, eqp_id=run.eqp_id,
+            in_qty=run.in_qty, scrap_qty=run.scrap_qty,
+            defect_code=run.defect_code, operator=run.operator,
+            result=run.result, in_time=run.in_time, out_time=run.out_time,
+        )
+
+    for key in sorted(hold_keys):
+        with db.get_conn() as conn:
+            conn.execute("UPDATE lot SET status='Hold' WHERE lot_id=?", (lot_ids[key],))
 
     # Package 3 of the completed products (consume SEMI -> FIN)
     for pcode in done_products[:3]:

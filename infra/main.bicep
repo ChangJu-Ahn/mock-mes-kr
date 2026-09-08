@@ -28,11 +28,18 @@ param revisionSuffix string = 'r${utcNow('yyMMddHHmmss')}'
 @description('Demo API key required in the X-API-Key header on all REST /api/* and MCP /mcp calls. Web console + /api/docs stay open.')
 param apiKey string = 'changjuahn'
 
+@description('Instant the newest seeded process result finishes (UTC, ISO 8601). The /data volume is EmptyDir and the app scales to zero, so the seed re-runs on every cold start; pinning the anchor at deploy time keeps a restart from shifting the dataset out from under a workshop in progress. Redeploy to move the data forward.')
+param mesAnchor string = utcNow('yyyy-MM-ddTHH:mm:ssZ')
+
 var dbPath = '/data/mes.db'
 var dbEnv = [
   {
     name: 'MES_DB_PATH'
     value: dbPath
+  }
+  {
+    name: 'MES_ANCHOR'
+    value: mesAnchor
   }
 ]
 // api + mcp additionally get the demo API key; the seed init container does not need it.

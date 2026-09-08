@@ -2,6 +2,7 @@
 
 import os
 import random
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -33,14 +34,23 @@ class ResolveAnchorTests(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("MES_ANCHOR", None)
 
-    def test_absent_env_returns_utc_now(self):
-        before = datetime.now(timezone.utc)
+    def test_absent_env_returns_the_fixed_default(self):
         got = schedule.resolve_anchor()
-        after = datetime.now(timezone.utc)
+        self.assertEqual(got, datetime.fromisoformat(schedule.DEFAULT_ANCHOR))
         self.assertEqual(got.tzinfo, timezone.utc)
         self.assertEqual(got.microsecond, 0)
-        self.assertLessEqual(before.replace(microsecond=0), got)
-        self.assertLessEqual(got, after)
+
+    def test_the_default_anchor_does_not_track_the_clock(self):
+        """The whole dataset hangs off this value.
+
+        If it ever went back to reading ``now``, every seeded in/out window
+        would move on each restart and deploy, and external stores that
+        recorded sensor data against those windows would stop lining up.
+        """
+        first = schedule.resolve_anchor()
+        time.sleep(1.1)
+        self.assertEqual(schedule.resolve_anchor(), first)
+        self.assertLess(first, datetime.now(timezone.utc))
 
     def test_parses_offset_form(self):
         os.environ["MES_ANCHOR"] = "2026-09-04T00:00:00+00:00"
@@ -58,9 +68,10 @@ class ResolveAnchorTests(unittest.TestCase):
         os.environ["MES_ANCHOR"] = "2026-09-04T09:00:00+09:00"
         self.assertEqual(schedule.resolve_anchor(), ANCHOR)
 
-    def test_blank_env_falls_back_to_now(self):
+    def test_blank_env_falls_back_to_the_fixed_default(self):
         os.environ["MES_ANCHOR"] = "   "
-        self.assertEqual(schedule.resolve_anchor().tzinfo, timezone.utc)
+        self.assertEqual(schedule.resolve_anchor(),
+                         datetime.fromisoformat(schedule.DEFAULT_ANCHOR))
 
     def test_garbage_raises(self):
         os.environ["MES_ANCHOR"] = "not-a-timestamp"

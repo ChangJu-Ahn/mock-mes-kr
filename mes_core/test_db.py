@@ -680,15 +680,10 @@ class KeyStabilityTests(unittest.TestCase):
         self.assertEqual(first[0], 1)
 
     def test_keys_are_stable_even_though_the_clock_moves(self):
-        """A cold start re-seeds at a new wall-clock instant.
+        """Wall-clock time passing between two cold starts changes nothing.
 
-        Identifiers are the contract and must survive that. Process timestamps
-        are derived from the clock, so they are deliberately *not* part of the
-        contract: an external test must key off `LOT0001`, never off the
-        instant its DIFF step happened to be written.
-
-        Deliberately exercises the real clock rather than patching a specific
-        helper, so this holds however the seed derives its timestamps.
+        Deliberately exercises the real clock rather than patching a helper,
+        so this holds however the seed derives its timestamps.
         """
         pinned = os.environ.pop("MES_ANCHOR", None)  # cold-start default
         try:
@@ -700,10 +695,115 @@ class KeyStabilityTests(unittest.TestCase):
             self.seed.seed()
 
             self.assertEqual(self._keys(), keys)
-            self.assertNotEqual(self._process_times(), times)
+            self.assertEqual(self._process_times(), times)
         finally:
             if pinned is not None:
                 os.environ["MES_ANCHOR"] = pinned
+
+
+class SeedImmutabilityTests(unittest.TestCase):
+    """A rebuilt database must be indistinguishable from the one it replaced.
+
+    ``/data`` is an EmptyDir volume and the app scales to zero, so the seed
+    re-runs on every replica start and again on every deploy. External systems
+    are built on top of this dataset -- notably sensor archives that record
+    readings against a lot's ``in_time``/``out_time`` window on a given tool.
+    If a restart or a redeploy handed out different windows, those archives
+    would silently stop lining up with the MES they describe.
+
+    So the contract is stronger than key stability: *every column of every
+    table* must come back byte-identical, timestamps included.
+    """
+
+    DB = Path(__file__).resolve().parents[1] / "data" / "mes_immutability_test.db"
+
+    # LOT0001's route, as an external store would have recorded it. Pinned in
+    # full because these windows are the join key: change the anchor, the
+    # schedule seed or the release interval and this fails loudly rather than
+    # quietly orphaning someone else's sensor data.
+    LOT0001_WINDOWS = (
+        ("DIFF", "EQP-DIFF01", "2026-08-29T07:13:00+00:00", "2026-08-29T08:58:00+00:00"),
+        ("PHOTO", "EQP-PHOT01", "2026-08-29T09:14:00+00:00", "2026-08-29T10:09:00+00:00"),
+        ("ETCH", "EQP-ETCH01", "2026-08-29T10:27:00+00:00", "2026-08-29T12:11:00+00:00"),
+        ("IMPL", "EQP-IMPL01", "2026-08-29T12:28:00+00:00", "2026-08-29T13:25:00+00:00"),
+        ("CVD", "EQP-CVD01", "2026-08-29T13:42:00+00:00", "2026-08-29T16:21:00+00:00"),
+        ("CMP", "EQP-CMP01", "2026-08-29T16:46:00+00:00", "2026-08-29T17:20:00+00:00"),
+        ("METRO", None, "2026-08-29T17:30:00+00:00", "2026-08-29T17:53:00+00:00"),
+        ("TEST", "EQP-TEST01", "2026-08-29T18:24:00+00:00", "2026-08-29T21:10:00+00:00"),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.pop("MES_ANCHOR", None)  # exercise the shipped default
+        os.environ["MES_DB_PATH"] = str(cls.DB)
+        cls.DB.parent.mkdir(exist_ok=True)
+        from mes_core import db, seed
+        importlib.reload(db)
+        importlib.reload(seed)
+        cls.db, cls.seed = db, seed
+
+    @classmethod
+    def tearDownClass(cls):
+        for f in cls.DB.parent.glob(cls.DB.name + "*"):
+            f.unlink(missing_ok=True)
+
+    def _snapshot(self) -> dict[str, list[tuple]]:
+        """Every row of every table, ordered, as comparable tuples."""
+        out = {}
+        with self.db.get_conn() as conn:
+            for table in self.db.TABLES:
+                cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+                order = ", ".join(f'"{c}"' for c in cols)
+                rows = conn.execute(f"SELECT * FROM {table} ORDER BY {order}").fetchall()
+                out[table] = [tuple(r) for r in rows]
+        return out
+
+    def test_reseeding_reproduces_every_table_byte_for_byte(self):
+        self.seed.seed()
+        before = self._snapshot()
+        self.assertTrue(all(before[t] for t in self.db.TABLES))
+
+        time.sleep(1.1)  # a later cold start must not mean later timestamps
+        self.seed.seed()
+
+        after = self._snapshot()
+        for table in self.db.TABLES:
+            self.assertEqual(after[table], before[table], table)
+
+    def test_reseeding_after_a_deletion_restores_it_byte_for_byte(self):
+        """The console's unauthenticated BOM delete must be self-healing."""
+        self.seed.seed()
+        before = self._snapshot()
+
+        self.db.delete_bom(before["bom"][0][0])
+        self.db.start_lot("LX9", 25)
+        self.assertNotEqual(self._snapshot(), before)
+
+        self.seed.seed()
+        self.assertEqual(self._snapshot(), before)
+
+    def test_lot0001_windows_match_the_published_baseline(self):
+        self.seed.seed()
+        rows = sorted(self.db.list_process_results(lot_id="LOT0001", limit=50),
+                      key=lambda r: r["id"])
+        got = tuple((r["step_code"], r["eqp_id"], r["in_time"], r["out_time"])
+                    for r in rows)
+        self.assertEqual(got, self.LOT0001_WINDOWS)
+
+    def test_every_window_is_a_usable_sensor_interval(self):
+        """Each row must describe a real span on a real tool, in the past.
+
+        A zero-length or inverted window would give a sensor archive nothing
+        to bracket its readings with.
+        """
+        self.seed.seed()
+        rows = self.db.list_process_results(limit=500)
+        self.assertEqual(len(rows), 91)
+        now = datetime.now(timezone.utc).isoformat()
+        for r in rows:
+            where = f"{r['lot_id']}/{r['step_code']}"
+            self.assertLess(r["in_time"], r["out_time"], where)
+            self.assertLess(r["out_time"], now, where)
 
 
 if __name__ == "__main__":

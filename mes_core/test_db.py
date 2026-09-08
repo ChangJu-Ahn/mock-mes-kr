@@ -596,11 +596,11 @@ class KeyStabilityTests(unittest.TestCase):
     The deployed app stores its SQLite DB on an ephemeral EmptyDir volume and
     re-runs ``mes_core.seed`` from an init container on every replica start, so
     with scale-to-zero the whole database is wiped and rebuilt routinely. That
-    is only safe because ``seed()`` is deterministic (``random.Random(42)``):
+    is only safe because ``seed()`` loads a literal file (``dataset.json``):
     the same identifiers come back every time.
 
     External demos connect to this MES by those identifiers, so anything that
-    makes the seed non-reproducible -- dropping the fixed RNG seed, renaming a
+    makes the seed non-reproducible -- deriving rows at boot, renaming a
     product, changing the lot count -- would silently break them on the next
     cold start. These tests turn that implicit property into an enforced one.
     """
@@ -701,40 +701,121 @@ class KeyStabilityTests(unittest.TestCase):
                 os.environ["MES_ANCHOR"] = pinned
 
 
+class MasterDataCrudTests(DbTestBase):
+    """Master data is editable so external clients can run mutation tests.
+
+    Nothing is durable -- a boot reloads ``dataset.json`` -- so the risk of a
+    bad edit is bounded by a restart. What is *not* acceptable is a write that
+    leaves the data self-contradictory, which this schema cannot prevent on its
+    own: it declares no foreign keys, so a deleted product would leave lots
+    pointing at nothing. The guard lives in the data layer and is pinned here.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._seed_master()
+
+    def test_create_then_read_back_a_product(self):
+        created = self.db.create_product("AP10", "AP10 Mobile SoC", "3nm")
+        self.assertEqual(created["product_name"], "AP10 Mobile SoC")
+        self.assertEqual(self.db.get_product("AP10"), created)
+
+    def test_create_rejects_a_duplicate_or_unusable_code(self):
+        self.db.create_product("AP10", "AP10 Mobile SoC")
+        for code in ("AP10", "", "   ", "has space", "x" * 41):
+            with self.subTest(code=code), self.assertRaises(ValueError):
+                self.db.create_product(code, "Anything")
+
+    def test_update_changes_only_what_it_is_given(self):
+        self.db.create_product("AP10", "AP10 Mobile SoC", "3nm")
+        row = self.db.update_product("AP10", product_name="AP10 (rev B)")
+        self.assertEqual(row["product_name"], "AP10 (rev B)")
+        self.assertEqual(row["tech_node"], "3nm")
+
+    def test_update_refuses_to_blank_a_name(self):
+        self.db.create_product("AP10", "AP10 Mobile SoC")
+        with self.assertRaises(ValueError):
+            self.db.update_product("AP10", product_name="   ")
+
+    def test_update_of_a_missing_row_reports_rather_than_creates(self):
+        self.assertIsNone(self.db.update_product("NOPE", product_name="x"))
+        self.assertIsNone(self.db.update_equipment("NOPE", eqp_name="x"))
+
+    def test_unused_master_data_can_be_deleted(self):
+        self.db.create_product("AP10", "AP10 Mobile SoC")
+        self.db.create_equipment("EQP-NEW01", "Etcher-B", type="Etcher")
+        self.assertTrue(self.db.delete_product("AP10"))
+        self.assertTrue(self.db.delete_equipment("EQP-NEW01"))
+        self.assertIsNone(self.db.get_product("AP10"))
+        self.assertFalse(self.db.delete_product("AP10"))
+
+    def test_a_referenced_product_cannot_be_deleted(self):
+        self.db.start_lot("P1", 25)
+        with self.assertRaises(ValueError) as caught:
+            self.db.delete_product("P1")
+        self.assertIn("lot", str(caught.exception))
+        self.assertIsNotNone(self.db.get_product("P1"))
+
+    def test_a_referenced_tool_cannot_be_deleted(self):
+        lot = self.db.start_lot("P1", 25)
+        self.db.register_process_result(lot["lot_id"], "PHOTO", eqp_id="EQP-PHOT01")
+        with self.assertRaises(ValueError) as caught:
+            self.db.delete_equipment("EQP-PHOT01")
+        self.assertIn("process result", str(caught.exception))
+        self.assertIsNotNone(self.db.get_equipment("EQP-PHOT01"))
+
+    def test_equipment_status_is_constrained_and_normalised(self):
+        self.db.create_equipment("EQP-NEW01", "Etcher-B", status="run")
+        self.assertEqual(self.db.get_equipment("EQP-NEW01")["status"], "Run")
+        with self.assertRaises(ValueError):
+            self.db.update_equipment("EQP-NEW01", status="Broken")
+
+    def test_equipment_defaults_to_idle(self):
+        self.assertEqual(self.db.create_equipment("EQP-NEW01", "Etcher-B")["status"], "Idle")
+
+
 class SeedImmutabilityTests(unittest.TestCase):
-    """A rebuilt database must be indistinguishable from the one it replaced.
+    """What survives a boot, and what deliberately moves.
 
-    ``/data`` is an EmptyDir volume and the app scales to zero, so the seed
-    re-runs on every replica start and again on every deploy. External systems
-    are built on top of this dataset -- notably sensor archives that record
-    readings against a lot's ``in_time``/``out_time`` window on a given tool.
-    If a restart or a redeploy handed out different windows, those archives
-    would silently stop lining up with the MES they describe.
+    ``/data`` is an EmptyDir volume, so the seed runs on every boot -- a cold
+    start and a redeploy are the same path. Two different promises come out of
+    that, and both matter to systems built on top of this MES:
 
-    So the contract is stronger than key stability: *every column of every
-    table* must come back byte-identical, timestamps included.
+    * **The rows are fixed.** Every identifier, quantity, yield and defect code
+      is a literal in ``dataset.json``, so they cannot drift when someone edits
+      the code that first produced them.
+    * **The timeline slides, rigidly.** The history is translated so it starts
+      three months before the boot date, which keeps a long-running demo
+      looking current. It is a pure translation by whole days: every duration,
+      every gap and every time of day is preserved exactly, so a sensor archive
+      that brackets its readings by a lot's ``in_time``/``out_time`` still sees
+      the same 55-minute window it always did.
+
+    Pin ``MES_HISTORY_START`` to freeze the dates outright.
     """
 
     DB = Path(__file__).resolve().parents[1] / "data" / "mes_immutability_test.db"
 
-    # LOT0001's route, as an external store would have recorded it. Pinned in
-    # full because these windows are the join key: change the anchor, the
-    # schedule seed or the release interval and this fails loudly rather than
-    # quietly orphaning someone else's sensor data.
+    #: The date the pinned expectations below are expressed against.
+    PINNED_START = "2026-06-10"
+
+    # LOT0001's route as an external store would have recorded it, given
+    # PINNED_START. The shape -- order, tools, durations, gaps -- is the join
+    # key; only the calendar is allowed to move.
     LOT0001_WINDOWS = (
-        ("DIFF", "EQP-DIFF01", "2026-08-29T07:13:00+00:00", "2026-08-29T08:58:00+00:00"),
-        ("PHOTO", "EQP-PHOT01", "2026-08-29T09:14:00+00:00", "2026-08-29T10:09:00+00:00"),
-        ("ETCH", "EQP-ETCH01", "2026-08-29T10:27:00+00:00", "2026-08-29T12:11:00+00:00"),
-        ("IMPL", "EQP-IMPL01", "2026-08-29T12:28:00+00:00", "2026-08-29T13:25:00+00:00"),
-        ("CVD", "EQP-CVD01", "2026-08-29T13:42:00+00:00", "2026-08-29T16:21:00+00:00"),
-        ("CMP", "EQP-CMP01", "2026-08-29T16:46:00+00:00", "2026-08-29T17:20:00+00:00"),
-        ("METRO", None, "2026-08-29T17:30:00+00:00", "2026-08-29T17:53:00+00:00"),
-        ("TEST", "EQP-TEST01", "2026-08-29T18:24:00+00:00", "2026-08-29T21:10:00+00:00"),
+        ("DIFF", "EQP-DIFF01", "2026-06-10T07:13:00+00:00", "2026-06-10T08:58:00+00:00"),
+        ("PHOTO", "EQP-PHOT01", "2026-06-10T09:14:00+00:00", "2026-06-10T10:09:00+00:00"),
+        ("ETCH", "EQP-ETCH01", "2026-06-10T10:27:00+00:00", "2026-06-10T12:11:00+00:00"),
+        ("IMPL", "EQP-IMPL01", "2026-06-10T12:28:00+00:00", "2026-06-10T13:25:00+00:00"),
+        ("CVD", "EQP-CVD01", "2026-06-10T13:42:00+00:00", "2026-06-10T16:21:00+00:00"),
+        ("CMP", "EQP-CMP01", "2026-06-10T16:46:00+00:00", "2026-06-10T17:20:00+00:00"),
+        ("METRO", None, "2026-06-10T17:30:00+00:00", "2026-06-10T17:53:00+00:00"),
+        ("TEST", "EQP-TEST01", "2026-06-10T18:24:00+00:00", "2026-06-10T21:10:00+00:00"),
     )
 
     @classmethod
     def setUpClass(cls):
-        os.environ.pop("MES_ANCHOR", None)  # exercise the shipped default
+        os.environ["MES_HISTORY_START"] = cls.PINNED_START
         os.environ["MES_DB_PATH"] = str(cls.DB)
         cls.DB.parent.mkdir(exist_ok=True)
         from mes_core import db, seed
@@ -744,6 +825,7 @@ class SeedImmutabilityTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        os.environ.pop("MES_HISTORY_START", None)
         for f in cls.DB.parent.glob(cls.DB.name + "*"):
             f.unlink(missing_ok=True)
 
@@ -804,6 +886,106 @@ class SeedImmutabilityTests(unittest.TestCase):
             where = f"{r['lot_id']}/{r['step_code']}"
             self.assertLess(r["in_time"], r["out_time"], where)
             self.assertLess(r["out_time"], now, where)
+
+
+class HistoryWindowTests(unittest.TestCase):
+    """The timeline slides on each boot, but only ever as a rigid whole.
+
+    This is the half of the contract external systems actually consume. They
+    do not care which calendar day a lot ran, they care that the step took 55
+    minutes and that the tool was free for the next lot 17 minutes later. So
+    the translation has to preserve every interval exactly, and the history has
+    to stay in the recent past rather than drifting into the future.
+    """
+
+    DB = Path(__file__).resolve().parents[1] / "data" / "mes_history_test.db"
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.pop("MES_HISTORY_START", None)  # exercise the shipped default
+        os.environ["MES_DB_PATH"] = str(cls.DB)
+        cls.DB.parent.mkdir(exist_ok=True)
+        from mes_core import db, seed
+        importlib.reload(db)
+        importlib.reload(seed)
+        cls.db, cls.seed = db, seed
+
+    @classmethod
+    def tearDownClass(cls):
+        os.environ.pop("MES_HISTORY_START", None)
+        for f in cls.DB.parent.glob(cls.DB.name + "*"):
+            f.unlink(missing_ok=True)
+
+    def _windows(self) -> list[tuple[datetime, datetime]]:
+        rows = sorted(self.db.list_process_results(limit=500), key=lambda r: r["id"])
+        return [(datetime.fromisoformat(r["in_time"]), datetime.fromisoformat(r["out_time"]))
+                for r in rows]
+
+    def _fixture_windows(self) -> list[tuple[datetime, datetime]]:
+        raw = self.seed.load_dataset()["process_result"]
+        cols = self.seed.TIME_COLUMNS["process_result"]
+        with self.db.get_conn() as conn:
+            names = [r[1] for r in conn.execute("PRAGMA table_info(process_result)")]
+        i, o = (names.index(c) for c in cols)
+        return [(datetime.fromisoformat(r[i]), datetime.fromisoformat(r[o]))
+                for r in sorted(raw, key=lambda r: r[names.index("id")])]
+
+    def test_history_starts_three_months_before_today(self):
+        self.seed.seed()
+        first = min(w[0] for w in self._windows()).date()
+        expected = datetime.now(timezone.utc).date() - self.seed.HISTORY_STARTS_AGO
+        self.assertEqual(first, expected)
+
+    def test_the_whole_history_moves_by_one_rigid_offset(self):
+        """A translation, not a rescale: one delta explains every row."""
+        self.seed.seed()
+        offsets = {live[0] - fixture[0]
+                   for fixture, live in zip(self._fixture_windows(), self._windows())}
+        self.assertEqual(len(offsets), 1, f"expected one uniform shift, got {offsets}")
+        self.assertEqual(offsets.pop().microseconds, 0)
+
+    def test_every_duration_and_gap_survives_the_shift(self):
+        self.seed.seed()
+        before, after = self._fixture_windows(), self._windows()
+        self.assertEqual([b[1] - b[0] for b in before], [a[1] - a[0] for a in after])
+        gaps = lambda w: [w[i + 1][0] - w[i][0] for i in range(len(w) - 1)]
+        self.assertEqual(gaps(before), gaps(after))
+
+    def test_times_of_day_are_preserved(self):
+        """The shift is whole days, so a 07:13 start stays a 07:13 start."""
+        self.seed.seed()
+        self.assertEqual([b[0].timetz() for b in self._fixture_windows()],
+                         [a[0].timetz() for a in self._windows()])
+
+    def test_lots_and_product_results_move_with_their_steps(self):
+        """Every time-bearing column shifts together, or the data contradicts itself."""
+        self.seed.seed()
+        firsts = {}
+        for r in self.db.list_process_results(limit=500):
+            firsts.setdefault(r["lot_id"], []).append(r["in_time"])
+        for lot in self.db.list_lots():
+            earliest = min(firsts.get(lot["lot_id"], ["9999"]))
+            self.assertLessEqual(lot["start_date"], earliest[:10], lot["lot_id"])
+
+    def test_pinning_the_start_makes_the_dataset_reproducible(self):
+        os.environ["MES_HISTORY_START"] = "2026-01-15"
+        try:
+            self.seed.seed()
+            pinned = self._windows()
+            self.assertEqual(min(w[0] for w in pinned).date().isoformat(), "2026-01-15")
+
+            self.seed.seed()
+            self.assertEqual(self._windows(), pinned)
+        finally:
+            os.environ.pop("MES_HISTORY_START", None)
+
+    def test_two_boots_on_the_same_day_are_identical(self):
+        """A restart mid-day must not move anything."""
+        self.seed.seed()
+        before = self._windows()
+        time.sleep(1.1)
+        self.seed.seed()
+        self.assertEqual(self._windows(), before)
 
 
 if __name__ == "__main__":

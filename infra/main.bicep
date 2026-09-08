@@ -1,14 +1,22 @@
 // Mock MES on Azure Container Apps (Consumption, cheapest).
 //
-// ONE Container App, ONE replica, scale-to-zero. All containers share an
-// ephemeral EmptyDir volume mounted at /data holding the SQLite DB:
+// ONE Container App, ONE always-on replica. All containers share an ephemeral
+// EmptyDir volume mounted at /data holding the SQLite DB:
 //   init container 'seed' -> writes /data/mes.db before app containers start
 //   'api'  container       -> FastAPI web console + REST on :8000
 //   'mcp'  container       -> MCP streamable-HTTP on :8001 (/mcp)
 //   'proxy' container      -> Caddy, the single external ingress on :8080
 //
 // Sizing: each container 0.25 vCPU / 0.5 GiB (ACA minimum). The 3 app
-// containers sum to 0.75 vCPU / 1.5 GiB per replica. minReplicas=0 => ~$0 idle.
+// containers sum to 0.75 vCPU / 1.5 GiB per replica.
+//
+// minReplicas is deliberately 1, not 0. /data dies with the replica, so
+// scaling to zero would silently discard everything a client had written a few
+// minutes earlier -- which makes it impossible to check the result of a
+// create/update/delete test against this MES. Holding one replica means writes
+// stand until the app is explicitly stopped, restarted or redeployed, and each
+// of those restores the shipped dataset. The trade is that the app no longer
+// idles at ~$0.
 
 @description('Deployment region.')
 param location string = resourceGroup().location
@@ -28,8 +36,8 @@ param revisionSuffix string = 'r${utcNow('yyMMddHHmmss')}'
 @description('Demo API key required in the X-API-Key header on all REST /api/* and MCP /mcp calls. Web console + /api/docs stay open.')
 param apiKey string = 'changjuahn'
 
-@description('Overrides the instant the newest seeded process result finishes (UTC, ISO 8601). Leave empty: the image pins a fixed default anchor, which is what keeps the dataset byte-identical across restarts and redeploys so external stores keyed to its in/out time windows stay valid. Set it only to move the whole dataset forward deliberately.')
-param mesAnchor string = ''
+@description('Pins the date the seeded history starts (UTC, ISO date). Leave empty: the seed places the first process step three months before the boot date and translates the whole history with it, so the dataset stays recent while every in/out interval is preserved exactly. Set it only to reproduce a specific run.')
+param historyStart string = ''
 
 var dbPath = '/data/mes.db'
 var dbEnv = [
@@ -38,8 +46,8 @@ var dbEnv = [
     value: dbPath
   }
   {
-    name: 'MES_ANCHOR'
-    value: mesAnchor
+    name: 'MES_HISTORY_START'
+    value: historyStart
   }
 ]
 // api + mcp additionally get the demo API key; the seed init container does not need it.
@@ -155,7 +163,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: {
-        minReplicas: 0
+        minReplicas: 1
         maxReplicas: 1
       }
     }

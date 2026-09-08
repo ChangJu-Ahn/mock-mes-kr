@@ -44,6 +44,41 @@ class ProductRow(BaseModel):
     tech_node: str | None = None
 
 
+class ProductCreate(BaseModel):
+    product_code: str = Field(..., description="Key. Must be unused.", examples=["AP10"])
+    product_name: str = Field(..., examples=["AP10 Mobile SoC"])
+    tech_node: str | None = Field(None, examples=["3nm"])
+
+
+class ProductUpdate(BaseModel):
+    """Only the fields you send change. The code itself is immutable."""
+
+    product_name: str | None = Field(None, examples=["LX9 AP (rev B)"])
+    tech_node: str | None = Field(None, examples=["4nm"])
+
+
+class EquipmentRow(BaseModel):
+    eqp_id: str
+    eqp_name: str
+    type: str | None = None
+    status: str | None = None
+
+
+class EquipmentCreate(BaseModel):
+    eqp_id: str = Field(..., description="Key. Must be unused.", examples=["EQP-ETCH02"])
+    eqp_name: str = Field(..., examples=["Etcher-B"])
+    type: str | None = Field(None, examples=["Etcher"])
+    status: Literal["Run", "Idle", "Down"] = "Idle"
+
+
+class EquipmentUpdate(BaseModel):
+    """Only the fields you send change. The id itself is immutable."""
+
+    eqp_name: str | None = Field(None, examples=["Etcher-B (spare)"])
+    type: str | None = Field(None, examples=["Etcher"])
+    status: Literal["Run", "Idle", "Down"] | None = None
+
+
 class ProductInventoryRow(BaseModel):
     product_code: str
     product_name: str | None = None
@@ -146,7 +181,10 @@ def api_index() -> dict[str, Any]:
         "docs": "/api/docs",
         "endpoints": [
             "GET /api/health",
-            "GET /api/products",
+            "GET|POST /api/products",
+            "GET|PATCH|DELETE /api/products/{product_code}",
+            "GET|POST /api/equipments",
+            "GET|PATCH|DELETE /api/equipments/{eqp_id}",
             "GET /api/product-inventory",
             "GET|POST /api/product-results",
             "POST /api/packaging",
@@ -175,6 +213,100 @@ def health() -> dict[str, Any]:
 @router.get("/products", response_model=list[ProductRow], tags=["Product"])
 def get_products() -> list[dict[str, Any]]:
     return db.list_products()
+
+
+@router.get("/products/{product_code}", response_model=ProductRow, tags=["Product"])
+def get_product(product_code: str) -> dict[str, Any]:
+    row = db.get_product(product_code)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"product {product_code} not found")
+    return row
+
+
+@router.post("/products", response_model=ProductRow, status_code=201, tags=["Product"])
+def post_product(payload: ProductCreate) -> dict[str, Any]:
+    try:
+        return db.create_product(payload.product_code, payload.product_name,
+                                 payload.tech_node)
+    except db.DuplicateKey as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.patch("/products/{product_code}", response_model=ProductRow, tags=["Product"])
+def patch_product(product_code: str, payload: ProductUpdate) -> dict[str, Any]:
+    try:
+        row = db.update_product(product_code, product_name=payload.product_name,
+                                tech_node=payload.tech_node)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"product {product_code} not found")
+    return row
+
+
+@router.delete("/products/{product_code}", tags=["Product"])
+def remove_product(product_code: str) -> dict[str, Any]:
+    try:
+        deleted = db.delete_product(product_code)
+    except ValueError as exc:
+        # Still referenced by lots/BOM/inventory: a conflict, not bad input.
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"product {product_code} not found")
+    return {"deleted": product_code}
+
+
+# --------------------------------------------------------------------------- #
+# 설비 (equipment)
+# --------------------------------------------------------------------------- #
+
+@router.get("/equipments", response_model=list[EquipmentRow], tags=["Equipment"])
+def get_equipments() -> list[dict[str, Any]]:
+    return db.list_equipment()
+
+
+@router.get("/equipments/{eqp_id}", response_model=EquipmentRow, tags=["Equipment"])
+def get_equipment(eqp_id: str) -> dict[str, Any]:
+    row = db.get_equipment(eqp_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"equipment {eqp_id} not found")
+    return row
+
+
+@router.post("/equipments", response_model=EquipmentRow, status_code=201, tags=["Equipment"])
+def post_equipment(payload: EquipmentCreate) -> dict[str, Any]:
+    try:
+        return db.create_equipment(payload.eqp_id, payload.eqp_name,
+                                   type=payload.type, status=payload.status)
+    except db.DuplicateKey as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.patch("/equipments/{eqp_id}", response_model=EquipmentRow, tags=["Equipment"])
+def patch_equipment(eqp_id: str, payload: EquipmentUpdate) -> dict[str, Any]:
+    try:
+        row = db.update_equipment(eqp_id, eqp_name=payload.eqp_name,
+                                  type=payload.type, status=payload.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"equipment {eqp_id} not found")
+    return row
+
+
+@router.delete("/equipments/{eqp_id}", tags=["Equipment"])
+def remove_equipment(eqp_id: str) -> dict[str, Any]:
+    try:
+        deleted = db.delete_equipment(eqp_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"equipment {eqp_id} not found")
+    return {"deleted": eqp_id}
 
 
 # --------------------------------------------------------------------------- #

@@ -1,3 +1,4 @@
+import asyncio
 import os
 import unittest
 from unittest import mock
@@ -388,10 +389,14 @@ class McpDocsTests(unittest.TestCase):
         )
 
     def test_docs_page_lists_every_live_mcp_tool(self):
+        """The page introspects the live registry, so it cannot silently drop a tool."""
         from api.mcp_spec import build_spec
+        from mcp_server.server import mcp
         html = self.client.get("/mcp-docs").text
         names = build_spec()["tool_names"]
-        self.assertEqual(len(names), 7)
+        live = [t.name for t in asyncio.run(mcp.list_tools())]
+        self.assertCountEqual(names, live)
+        self.assertTrue(names, "MCP server exposes no tools")
         for name in names:
             self.assertIn(f'id="tool-{name}"', html, name)
             self.assertIn(f'href="#tool-{name}"', html, name)
@@ -498,9 +503,14 @@ class McpSpecUnitTests(unittest.TestCase):
         spec = build_spec()
         self.assertEqual(spec["server_name"], "mock-mes-mcp")
         self.assertTrue(spec["stateless"])
-        self.assertEqual(spec["write_tools"], ["start_lot", "register_process_result"])
+        # Anything that mutates has to be labelled as such -- the page is the
+        # only warning a read-only integrator gets before calling one.
+        self.assertEqual(spec["write_tools"],
+                         ["start_lot", "register_process_result",
+                          "create_product", "update_product", "delete_product",
+                          "create_equipment", "update_equipment", "delete_equipment"])
         self.assertEqual([g["name"] for g in spec["groups"]],
-                         ["로트 (Lot)", "공정 (Process)", "재공 (WIP)"])
+                         ["로트 (Lot)", "공정 (Process)", "재공 (WIP)", "기준정보 (Master)"])
         # every tool is reachable through exactly one group
         grouped = [t["name"] for g in spec["groups"] for t in g["tools"]]
         self.assertCountEqual(grouped, spec["tool_names"])
@@ -526,14 +536,188 @@ class McpSpecUnitTests(unittest.TestCase):
             self.assertTrue(tool["summary"], tool["name"])
 
 
-class DeletionSurfaceTests(unittest.TestCase):
-    """Guards how much of this MES can be destroyed.
+class MasterDataWriteSurfaceTests(unittest.TestCase):
+    """The mutation path an outside client actually exercises.
 
-    External demos connect to this MES by identifier, so the set of things that
-    can delete data is a contract, not an implementation detail. BOM is the only
-    entity with a delete path; if anyone adds one for lots, products, materials
-    or process results, these tests fail and the decision has to be deliberate.
+    The point of shipping master-data CRUD was to let someone drive this MES
+    from outside -- rename a product over MCP, add a tool over REST -- and see
+    the change reflected everywhere. Writes land in one shared SQLite file, so
+    a change made through any surface must be visible through all of them.
     """
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MES_DB_PATH"] = os.path.join(os.getcwd(), "data", "mes_write_unittest.db")
+        from mes_core import db, seed
+        db.reset_db()
+        seed.seed()
+        from api.main import app
+        from mcp_server import server
+        cls.db, cls.server = db, server
+        cls.client = TestClient(app, headers=KEY)
+        cls.open_client = TestClient(app)  # no key
+
+    @classmethod
+    def tearDownClass(cls):
+        for suffix in ("", "-shm", "-wal"):
+            path = os.environ["MES_DB_PATH"] + suffix
+            if os.path.exists(path):
+                os.remove(path)
+
+    def tearDown(self):
+        for code in ("ZZ1", "ZZ2"):
+            try:
+                self.db.delete_product(code)
+            except ValueError:
+                pass
+        for eqp in ("EQP-ZZ01", "EQP-ZZ02"):
+            try:
+                self.db.delete_equipment(eqp)
+            except ValueError:
+                pass
+
+    # --- REST -------------------------------------------------------------- #
+    def test_rest_round_trips_a_product(self):
+        res = self.client.post("/api/products", json={
+            "product_code": "ZZ1", "product_name": "ZZ1 Test", "tech_node": "3nm"})
+        self.assertEqual(res.status_code, 201)
+
+        res = self.client.patch("/api/products/ZZ1", json={"product_name": "ZZ1 Renamed"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["product_name"], "ZZ1 Renamed")
+        self.assertEqual(res.json()["tech_node"], "3nm", "unset fields must be left alone")
+
+        listed = {p["product_code"]: p for p in self.client.get("/api/products").json()}
+        self.assertEqual(listed["ZZ1"]["product_name"], "ZZ1 Renamed")
+        self.assertEqual(self.client.delete("/api/products/ZZ1").status_code, 200)
+        self.assertEqual(self.client.get("/api/products/ZZ1").status_code, 404)
+
+    def test_rest_round_trips_equipment(self):
+        res = self.client.post("/api/equipments", json={
+            "eqp_id": "EQP-ZZ01", "eqp_name": "Tester-Z", "type": "Prober"})
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.json()["status"], "Idle", "a new tool starts idle")
+
+        res = self.client.patch("/api/equipments/EQP-ZZ01", json={"status": "Down"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["status"], "Down")
+        self.assertEqual(res.json()["eqp_name"], "Tester-Z", "unset fields must be left alone")
+        self.assertEqual(self.client.delete("/api/equipments/EQP-ZZ01").status_code, 200)
+        self.assertEqual(self.client.get("/api/equipments/EQP-ZZ01").status_code, 404)
+
+    def test_rest_documents_the_status_enum_it_enforces(self):
+        """Swagger's dropdown and the data layer's rule must not drift apart."""
+        from api.rest import EquipmentUpdate
+        status = EquipmentUpdate.model_json_schema()["properties"]["status"]
+        enum = next(v["enum"] for v in status["anyOf"] if "enum" in v)
+        self.assertEqual(tuple(enum), self.db.EQUIPMENT_STATUSES)
+
+    def test_rest_rejects_duplicates_unknown_rows_and_bad_status(self):
+        self.client.post("/api/products", json={"product_code": "ZZ1", "product_name": "A"})
+        dup = self.client.post("/api/products", json={"product_code": "ZZ1", "product_name": "B"})
+        self.assertEqual(dup.status_code, 409)
+        self.assertEqual(
+            self.client.patch("/api/products/NOPE", json={"product_name": "x"}).status_code, 404)
+        self.assertEqual(self.client.delete("/api/products/NOPE").status_code, 404)
+
+        self.client.post("/api/equipments", json={"eqp_id": "EQP-ZZ01", "eqp_name": "T"})
+        bad = self.client.patch("/api/equipments/EQP-ZZ01", json={"status": "Exploded"})
+        self.assertEqual(bad.status_code, 422)
+
+    def test_master_writes_require_the_api_key(self):
+        for call in (
+            lambda c: c.post("/api/products", json={"product_code": "ZZ1", "product_name": "A"}),
+            lambda c: c.patch("/api/products/LX9", json={"product_name": "A"}),
+            lambda c: c.delete("/api/products/LX9"),
+            lambda c: c.post("/api/equipments", json={"eqp_id": "EQP-ZZ01", "eqp_name": "A"}),
+            lambda c: c.patch("/api/equipments/EQP-DIFF01", json={"eqp_name": "A"}),
+            lambda c: c.delete("/api/equipments/EQP-DIFF01"),
+        ):
+            with self.subTest(call=call):
+                self.assertEqual(call(self.open_client).status_code, 401)
+
+    # --- MCP --------------------------------------------------------------- #
+    def test_mcp_can_rename_a_seeded_product_and_put_it_back(self):
+        """The exact scenario this feature exists for."""
+        original = self.db.get_product("LX9")["product_name"]
+        try:
+            renamed = self.server.update_product("LX9", product_name="LX9 (renamed by agent)")
+            self.assertEqual(renamed["product_name"], "LX9 (renamed by agent)")
+            # visible through the other two surfaces, not just the caller's
+            self.assertEqual(self.client.get("/api/products/LX9").json()["product_name"],
+                             "LX9 (renamed by agent)")
+            self.assertIn("LX9 (renamed by agent)", self.open_client.get("/products").text)
+        finally:
+            self.db.update_product("LX9", product_name=original)
+
+    def test_mcp_round_trips_master_data(self):
+        self.assertEqual(
+            self.server.create_product("ZZ2", "ZZ2 Test")["product_code"], "ZZ2")
+        self.assertIn("ZZ2", [p["product_code"] for p in self.server.list_products()])
+        self.assertEqual(self.server.update_product("ZZ2", tech_node="2nm")["tech_node"], "2nm")
+        self.assertTrue(self.server.delete_product("ZZ2")["deleted"])
+
+        self.server.create_equipment("EQP-ZZ02", "Tester-Y", type="Prober")
+        self.assertIn("EQP-ZZ02", [e["eqp_id"] for e in self.server.list_equipments()])
+        self.assertEqual(
+            self.server.update_equipment("EQP-ZZ02", status="down")["status"], "Down")
+        self.assertTrue(self.server.delete_equipment("EQP-ZZ02")["deleted"])
+
+    def test_mcp_reports_failures_as_errors_rather_than_raising(self):
+        """A raised exception inside a tool reads as a broken server to a client."""
+        for payload in (
+            self.server.update_product("NOPE", product_name="x"),
+            self.server.delete_product("NOPE"),
+            self.server.create_product("LX9", "duplicate"),
+            self.server.update_equipment("EQP-DIFF01", status="Exploded"),
+        ):
+            with self.subTest(payload=payload):
+                self.assertIn("error", payload)
+
+    # --- web console ------------------------------------------------------- #
+    def test_web_forms_create_edit_and_delete(self):
+        res = self.open_client.post(
+            "/products",
+            data={"product_code": "ZZ1", "product_name": "ZZ1 Web", "tech_node": "5nm"},
+            follow_redirects=False)
+        self.assertEqual(res.status_code, 303)
+        self.assertIn("ZZ1 Web", self.open_client.get("/products").text)
+
+        self.open_client.post("/products/ZZ1/update", data={"product_name": "ZZ1 Web 2"},
+                              follow_redirects=False)
+        self.assertEqual(self.db.get_product("ZZ1")["product_name"], "ZZ1 Web 2")
+
+        self.open_client.post("/products/ZZ1/delete", follow_redirects=False)
+        self.assertIsNone(self.db.get_product("ZZ1"))
+
+    def test_web_reports_a_refused_delete_instead_of_500ing(self):
+        res = self.open_client.post("/products/LX9/delete", follow_redirects=False)
+        self.assertEqual(res.status_code, 303)
+        page = self.open_client.get(res.headers["location"])
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("still referenced by", page.text)
+        self.assertIsNotNone(self.db.get_product("LX9"))
+
+
+class DeletionSurfaceTests(unittest.TestCase):
+    """Guards how much of this MES can be destroyed, and how it recovers.
+
+    Deleting used to be forbidden almost everywhere, because a lost identifier
+    was permanent. That is no longer the trade: ``/data`` is an EmptyDir volume
+    reloaded from ``dataset.json`` on every boot, so any delete is undone by
+    restarting the app. Destructive operations are therefore allowed *and*
+    fenced -- a row that something still points at cannot be removed, since the
+    schema declares no foreign keys and nothing else would catch it.
+
+    These tests pin that fence. If a delete path appears for an entity without
+    one, or an existing guard is dropped, they fail and the decision has to be
+    deliberate.
+    """
+
+    GUARDED = {
+        "product": ("LX9", "delete_product"),
+        "equipment": ("EQP-DIFF01", "delete_equipment"),
+    }
 
     @classmethod
     def setUpClass(cls):
@@ -552,7 +736,7 @@ class DeletionSurfaceTests(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
 
-    def test_bom_is_the_only_deletable_entity_over_http(self):
+    def test_the_deletable_entities_are_exactly_the_documented_ones(self):
         # Inspect the routers we define rather than app.routes: FastAPI wraps
         # included routers (_IncludedRouter) and the shape of that wrapper is an
         # internal detail that changes between versions.
@@ -565,19 +749,62 @@ class DeletionSurfaceTests(unittest.TestCase):
             for method in (getattr(route, "methods", None) or set())
             if method == "DELETE" or route.path.endswith("/delete")
         )
-        self.assertEqual(deleting, ["DELETE /api/bom/{bom_id}", "POST /bom/{bom_id}/delete"])
+        self.assertEqual(deleting, [
+            "DELETE /api/bom/{bom_id}",
+            "DELETE /api/equipments/{eqp_id}",
+            "DELETE /api/products/{product_code}",
+            "POST /bom/{bom_id}/delete",
+            "POST /equipment/{eqp_id}/delete",
+            "POST /products/{product_code}/delete",
+        ])
 
-    def test_the_data_layer_exposes_exactly_one_row_delete(self):
+    def test_the_data_layer_exposes_only_guarded_row_deletes(self):
         from mes_core import db
-        self.assertEqual(sorted(n for n in dir(db) if n.startswith("delete_")), ["delete_bom"])
+        self.assertEqual(
+            sorted(n for n in dir(db) if n.startswith("delete_")),
+            ["delete_bom", "delete_equipment", "delete_product"])
 
-    def test_no_mcp_tool_can_delete_anything(self):
-        # The MCP surface is the one agents drive autonomously, so it must stay
-        # read/create only -- an agent must not be able to destroy demo keys.
+    def test_master_data_in_use_cannot_be_deleted(self):
+        """The whole point of the fence: seeded keys survive a delete attempt."""
+        from mes_core import db
+        for kind, (code, fname) in self.GUARDED.items():
+            with self.subTest(kind):
+                with self.assertRaises(ValueError) as caught:
+                    getattr(db, fname)(code)
+                self.assertIn("still referenced by", str(caught.exception))
+                self.assertIsNotNone(getattr(db, f"get_{kind}")(code))
+
+    def test_deleting_in_use_master_data_over_http_is_a_conflict(self):
+        client = TestClient(self.app)
+        headers = {"X-API-Key": "changjuahn"}
+        for path in ("/api/products/LX9", "/api/equipments/EQP-DIFF01"):
+            with self.subTest(path):
+                res = client.delete(path, headers=headers)
+                self.assertEqual(res.status_code, 409)
+                self.assertIn("still referenced by", res.json()["detail"])
+
+    def test_every_mcp_delete_tool_is_fenced(self):
+        """Agents drive MCP autonomously, so deletes there must refuse politely.
+
+        They return an ``error`` payload rather than raising, because a raised
+        exception inside a tool call reads as a broken server to the client.
+        """
+        import asyncio
+        from mcp_server import server
+        deleters = [t.name for t in asyncio.run(server.mcp.list_tools())
+                    if t.name.startswith("delete_")]
+        self.assertEqual(sorted(deleters), ["delete_equipment", "delete_product"])
+
+        self.assertIn("still referenced by", server.delete_product("LX9")["error"])
+        self.assertIn("still referenced by",
+                      server.delete_equipment("EQP-DIFF01")["error"])
+
+    def test_nothing_can_wipe_the_database_wholesale(self):
+        """Row-level deletes are fine; a reset/purge/drop tool would not be."""
         import asyncio
         from mcp_server.server import mcp
         for tool in asyncio.run(mcp.list_tools()):
-            self.assertNotRegex(tool.name, r"delete|remove|drop|reset|purge|clear")
+            self.assertNotRegex(tool.name, r"drop|reset|purge|clear|truncate")
 
     def test_rest_delete_requires_the_api_key(self):
         self.assertEqual(self.open_client.delete("/api/bom/1").status_code, 401)

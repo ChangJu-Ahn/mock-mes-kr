@@ -2,9 +2,9 @@
 
 import importlib
 import os
+import time
 import unittest
 from pathlib import Path
-from unittest import mock
 
 TEST_DB = Path(__file__).resolve().parents[1] / "data" / "mes_core_unit_test.db"
 
@@ -564,20 +564,27 @@ class KeyStabilityTests(unittest.TestCase):
         """A cold start re-seeds at a new wall-clock instant.
 
         Identifiers are the contract and must survive that. Process timestamps
-        are read from the clock while the seed runs, so they are deliberately
-        *not* part of the contract: an external test must key off `LOT0001`,
-        never off the instant its DIFF step happened to be written.
-        """
-        self.seed.seed()
-        keys, times = self._keys(), self._process_times()
-        self.assertTrue(times)
+        are derived from the clock, so they are deliberately *not* part of the
+        contract: an external test must key off `LOT0001`, never off the
+        instant its DIFF step happened to be written.
 
-        with mock.patch.object(self.db, "_now_iso",
-                               return_value="2030-01-02T03:04:05+00:00"):
+        Deliberately exercises the real clock rather than patching a specific
+        helper, so this holds however the seed derives its timestamps.
+        """
+        pinned = os.environ.pop("MES_ANCHOR", None)  # cold-start default
+        try:
+            self.seed.seed()
+            keys, times = self._keys(), self._process_times()
+            self.assertTrue(times)
+
+            time.sleep(1.1)  # timestamps have second precision
             self.seed.seed()
 
-        self.assertEqual(self._keys(), keys)
-        self.assertNotEqual(self._process_times(), times)
+            self.assertEqual(self._keys(), keys)
+            self.assertNotEqual(self._process_times(), times)
+        finally:
+            if pinned is not None:
+                os.environ["MES_ANCHOR"] = pinned
 
 
 if __name__ == "__main__":

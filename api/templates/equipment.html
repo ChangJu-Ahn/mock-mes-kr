@@ -31,11 +31,34 @@
     </div>
   </section>
   <section class="data-panel">
+    <div class="panel-header"><h2>설비 등록</h2><span class="panel-meta">Create</span></div>
+    <form method="post" action="/equipment">
+      <div class="form-grid">
+        <label class="form-field">설비 ID <span class="required">*</span><input name="eqp_id" placeholder="EQP-ETCH02" required></label>
+        <label class="form-field">설비명 <span class="required">*</span><input name="eqp_name" placeholder="Etcher-B" required></label>
+        <label class="form-field">유형<input name="type" placeholder="Etcher"></label>
+        <label class="form-field">상태<select name="status">{% for s in statuses %}<option value="{{ s }}"{% if s == "Idle" %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+      </div>
+      <div class="form-footer"><p class="form-note">설비 ID는 키이며 등록 후 변경할 수 없습니다. 재기동하면 초기 데이터로 복원됩니다.</p><button type="submit">설비 등록</button></div>
+    </form>
+  </section>
+  <section class="data-panel">
     <div class="panel-header"><h2>설비 목록</h2><span class="panel-meta">{{ rows|length }} 대</span></div>
     <div class="table-wrap">
-      <table><thead><tr><th>설비 ID</th><th>설비명</th><th>유형</th><th>상태</th></tr></thead><tbody>
-      {% for r in rows %}<tr><td><strong>{{ r.eqp_id }}</strong></td><td>{{ r.eqp_name }}</td><td>{{ r.type }}</td><td><span class="badge badge-{{ r.status|lower }}">{{ r.status }}</span></td></tr>
-      {% else %}<tr><td colspan="4" class="empty-state">등록된 설비가 없습니다.</td></tr>{% endfor %}
+      <table><thead><tr><th>설비 ID</th><th>설비명</th><th>유형</th><th>상태</th><th>관리</th></tr></thead><tbody>
+      {% for r in rows %}<tr>
+        <td><strong>{{ r.eqp_id }}</strong></td>
+        <td><form method="post" action="/equipment/{{ r.eqp_id }}/update" class="inline-form">
+          <input name="eqp_name" value="{{ r.eqp_name }}" aria-label="{{ r.eqp_id }} 설비명">
+          <input name="type" value="{{ r.type or '' }}" aria-label="{{ r.eqp_id }} 유형">
+          <select name="status" aria-label="{{ r.eqp_id }} 상태">{% for s in statuses %}<option value="{{ s }}"{% if s == r.status %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+          <button type="submit">저장</button>
+        </form></td>
+        <td>{{ r.type }}</td>
+        <td><span class="badge badge-{{ r.status|lower }}">{{ r.status }}</span></td>
+        <td><form method="post" action="/equipment/{{ r.eqp_id }}/delete"><button type="submit" class="button-danger" aria-label="설비 {{ r.eqp_id }} 삭제">삭제</button></form></td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="empty-state">등록된 설비가 없습니다.</td></tr>{% endfor %}
       </tbody></table>
     </div>
   </section>

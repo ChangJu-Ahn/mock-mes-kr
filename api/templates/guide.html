@@ -21,9 +21,19 @@
   </section>
   <div class="grid-3">
     <section class="panel"><div class="panel-header"><h2>웹 콘솔</h2><span class="badge badge-running">HUMAN</span></div><p>대시보드와 모든 조회·입력 화면을 사용합니다. 인증 헤더가 필요하지 않습니다.</p><a href="/">대시보드 열기 →</a></section>
-    <section class="panel"><div class="panel-header"><h2>REST API</h2><span class="badge badge-auto_fab">AGENT</span></div><p>Product · Material · BOM 조회와 트랜잭션을 제공합니다.</p><p><code>X-API-Key: changjuahn</code></p><a href="/api/docs">/api/docs 열기 →</a></section>
-    <section class="panel"><div class="panel-header"><h2>MCP 서버</h2><span class="badge badge-auto_pack">AGENT</span></div><p>로트 이력 · 공정실적 · 재공은 REST가 아닌 MCP 도구로만 제공합니다.</p><p><code>/mcp</code> · 같은 API 키 헤더 사용</p><a href="/mcp-docs">/mcp-docs 열기 →</a></section>
+    <section class="panel"><div class="panel-header"><h2>REST API</h2><span class="badge badge-auto_fab">AGENT</span></div><p>기준정보(제품 · 설비) CRUD와 Material · BOM 조회 및 트랜잭션을 제공합니다.</p><p><code>X-API-Key: changjuahn</code></p><a href="/api/docs">/api/docs 열기 →</a></section>
+    <section class="panel"><div class="panel-header"><h2>MCP 서버</h2><span class="badge badge-auto_pack">AGENT</span></div><p>로트 이력 · 공정실적 · 재공은 REST가 아닌 MCP 도구로만 제공합니다. 기준정보는 양쪽 모두 지원합니다.</p><p><code>/mcp</code> · 같은 API 키 헤더 사용</p><a href="/mcp-docs">/mcp-docs 열기 →</a></section>
   </div>
+  <section class="panel"><div class="panel-header"><h2>데이터는 언제 바뀌나요?</h2><span class="panel-meta">외부 연동 시 꼭 확인</span></div>
+    <p>이 MES의 기본 데이터셋은 소스코드에 <strong>고정된 픽스처</strong>(<code>mes_core/dataset.json</code>)입니다. 난수로 만들어내지 않으므로 코드를 고쳐도 값이 바뀌지 않습니다.</p>
+    <div class="guide-steps">
+      <article class="guide-step"><h3>기동할 때만 초기화</h3><p>컨테이너가 새로 뜰 때(재기동 · 재배포) 픽스처를 다시 적재합니다. 그 외에는 초기화되지 않습니다.</p></article>
+      <article class="guide-step"><h3>이력은 3개월 전부터</h3><p>기동 시각 기준 90일 전부터 시작하도록 <strong>날짜만</strong> 통째로 밀어 넣습니다. 각 공정의 소요시간과 공정 간 간격은 그대로 보존됩니다.</p></article>
+      <article class="guide-step"><h3>운영 중 입력은 유지</h3><p>API · MCP · 화면으로 만든 데이터는 앱이 떠 있는 동안 유지됩니다. 되돌리려면 리비전을 재기동하세요.</p></article>
+      <article class="guide-step"><h3>키는 삭제 방지</h3><p>다른 로트 · BOM · 공정실적이 참조 중인 제품 · 설비는 삭제되지 않습니다(REST 409). 제품코드 · 설비ID 자체는 수정할 수 없습니다.</p></article>
+    </div>
+    <p class="panel-meta">센서 데이터처럼 로트의 <code>in_time</code> · <code>out_time</code> 구간에 맞춰 저장하는 시스템이라면, 날짜가 매일 하루씩 밀리므로 구간 값을 캐시하지 말고 <code>get_lot</code> 등으로 그때그때 조회하세요. 날짜를 완전히 고정하려면 <code>MES_HISTORY_START</code> 환경변수를 지정하면 됩니다.</p>
+  </section>
   <section class="panel"><div class="panel-header"><h2>에이전트 연결 예시</h2><span class="panel-meta">REST + MCP</span></div>
     <pre>curl -H "X-API-Key: changjuahn" https://&lt;fqdn&gt;/api/product-inventory
 
@@ -31,6 +41,7 @@ MCP endpoint: https://&lt;fqdn&gt;/mcp
 Header: X-API-Key: changjuahn
 Transactions: start_lot, register_process_result
 Queries: get_lot, list_lots, get_process_route, list_process_results, get_wip
+Master: list/create/update/delete_product, list/create/update/delete_equipment
 
 도구 스키마 · 클라이언트 설정 예시: /mcp-docs  (기계용 스펙: /mcp-docs.json)</pre>
   </section>

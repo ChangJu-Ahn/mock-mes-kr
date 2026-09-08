@@ -116,6 +116,116 @@ def get_wip(step_code: str | None = None) -> list[dict[str, Any]]:
     return db.get_wip(step_code=step_code)
 
 
+# --------------------------------------------------------------------------- #
+# 기준정보 관리 (master data)
+#
+# Writes live only as long as the container does: /data is an EmptyDir volume,
+# so stopping and starting the app restores the shipped dataset. That makes
+# these safe to exercise -- a bad rename or delete is undone by a restart.
+# --------------------------------------------------------------------------- #
+
+@mcp.tool(
+    description=(
+        "제품 조회(list): master product records (product_code, product_name, tech_node)."
+    )
+)
+def list_products() -> list[dict[str, Any]]:
+    return db.list_products()
+
+
+@mcp.tool(
+    description=(
+        "제품 등록(create): register a new product. product_code is the key and "
+        "must be unused. Returns the created product."
+    )
+)
+def create_product(product_code: str, product_name: str,
+                   tech_node: str | None = None) -> dict[str, Any]:
+    try:
+        return db.create_product(product_code, product_name, tech_node)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool(
+    description=(
+        "제품 수정(update): rename a product or restate its tech_node. Only the "
+        "fields you pass change; product_code itself cannot be changed."
+    )
+)
+def update_product(product_code: str, product_name: str | None = None,
+                   tech_node: str | None = None) -> dict[str, Any]:
+    try:
+        row = db.update_product(product_code, product_name=product_name,
+                                tech_node=tech_node)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return row or {"error": f"product {product_code} not found"}
+
+
+@mcp.tool(
+    description=(
+        "제품 삭제(delete): remove a product. Refused while any lot, BOM row, "
+        "inventory row or product result still references it."
+    )
+)
+def delete_product(product_code: str) -> dict[str, Any]:
+    try:
+        deleted = db.delete_product(product_code)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"deleted": product_code} if deleted else {
+        "error": f"product {product_code} not found"}
+
+
+@mcp.tool(description="설비 조회(list): equipment master (eqp_id, eqp_name, type, status).")
+def list_equipments() -> list[dict[str, Any]]:
+    return db.list_equipment()
+
+
+@mcp.tool(
+    description=(
+        "설비 등록(create): register a new tool. eqp_id is the key and must be "
+        "unused. status is one of Run, Idle, Down (default Idle)."
+    )
+)
+def create_equipment(eqp_id: str, eqp_name: str, type: str | None = None,
+                     status: str = "Idle") -> dict[str, Any]:
+    try:
+        return db.create_equipment(eqp_id, eqp_name, type=type, status=status)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool(
+    description=(
+        "설비 수정(update): rename a tool, retype it, or set status to Run, Idle "
+        "or Down. Only the fields you pass change; eqp_id cannot be changed."
+    )
+)
+def update_equipment(eqp_id: str, eqp_name: str | None = None, type: str | None = None,
+                     status: str | None = None) -> dict[str, Any]:
+    try:
+        row = db.update_equipment(eqp_id, eqp_name=eqp_name, type=type, status=status)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return row or {"error": f"equipment {eqp_id} not found"}
+
+
+@mcp.tool(
+    description=(
+        "설비 삭제(delete): remove a tool. Refused while any process result or "
+        "product result still references it."
+    )
+)
+def delete_equipment(eqp_id: str) -> dict[str, Any]:
+    try:
+        deleted = db.delete_equipment(eqp_id)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {"deleted": eqp_id} if deleted else {"error": f"equipment {eqp_id} not found"}
+
+
 def main() -> None:
     import uvicorn
 

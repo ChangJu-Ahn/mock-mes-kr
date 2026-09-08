@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -34,13 +35,15 @@ def _context(request: Request, **extra: Any) -> dict[str, Any]:
 
 
 def _redirect(path: str, *, message: str | None = None, error: str | None = None):
-    q = []
-    if message:
-        q.append(f"message={message}")
-    if error:
-        q.append(f"error={error}")
-    sep = "?" if q else ""
-    return RedirectResponse(path + sep + "&".join(q), status_code=_SEE_OTHER)
+    """Redirect back to a page carrying a flash message.
+
+    The values are percent-encoded: a rejected delete explains itself in prose
+    ("still referenced by 4 lots, 12 BOM rows"), and raw spaces and commas in a
+    Location header would otherwise produce a malformed URL.
+    """
+    q = {k: v for k, v in (("message", message), ("error", error)) if v}
+    return RedirectResponse(path + ("?" + urlencode(q) if q else ""),
+                            status_code=_SEE_OTHER)
 
 
 def _shortage_note(shortages: list[dict[str, Any]]) -> str:
@@ -87,7 +90,7 @@ def lots_start(product_code: str = Form(...), start_qty: int = Form(...),
         lot = db.start_lot(product_code, start_qty, priority=priority)
     except ValueError as exc:
         return _redirect("/lots", error=str(exc))
-    return _redirect("/lots", message=f"Lot+{lot['lot_id']}+started")
+    return _redirect("/lots", message=f"Lot {lot['lot_id']} started")
 
 
 @router.get("/lots/{lot_id}")
@@ -163,7 +166,7 @@ def packaging(product_code: str = Form(...), in_qty: int = Form(...),
     except ValueError as exc:
         return _redirect("/product-inventory", error=str(exc))
     return _redirect("/product-inventory",
-                     message="Packaged+" + str(res["good_qty"]) + "+FIN" + _shortage_note(res["shortages"]))
+                     message="Packaged " + str(res["good_qty"]) + " FIN" + _shortage_note(res["shortages"]))
 
 
 # --------------------------------------------------------------------------- #
@@ -195,7 +198,7 @@ def product_result_create(lot_id: str = Form(...), item_type: str = Form(...),
                                    good_qty=good_qty, scrap_qty=_int_or_none(scrap_qty) or 0)
     except ValueError as exc:
         return _redirect("/product-results", error=str(exc))
-    return _redirect("/product-results", message="Product+result+recorded")
+    return _redirect("/product-results", message="Product result recorded")
 
 
 # --------------------------------------------------------------------------- #
@@ -226,7 +229,7 @@ def materials_receive(material_code: str = Form(...), qty: float = Form(...),
                             location=_blank_to_none(location))
     except ValueError as exc:
         return _redirect("/materials", error=str(exc))
-    return _redirect("/materials", message="Material+received")
+    return _redirect("/materials", message="Material received")
 
 
 # --------------------------------------------------------------------------- #
@@ -258,13 +261,13 @@ def bom_upsert(product_code: str = Form(...), step_code: str = Form(...),
                       uom=_blank_to_none(uom))
     except ValueError as exc:
         return _redirect("/bom", error=str(exc))
-    return _redirect("/bom", message="BOM+saved")
+    return _redirect("/bom", message="BOM saved")
 
 
 @router.post("/bom/{bom_id}/delete")
 def bom_delete(bom_id: int):
     db.delete_bom(bom_id)
-    return _redirect("/bom", message="BOM+deleted")
+    return _redirect("/bom", message="BOM deleted")
 
 
 # --------------------------------------------------------------------------- #
@@ -277,9 +280,92 @@ def wip(request: Request):
 
 
 @router.get("/equipment")
-def equipment(request: Request):
-    return templates.TemplateResponse(request, "equipment.html",
-                                      _context(request, rows=db.list_equipment()))
+def equipment(request: Request, message: str | None = None, error: str | None = None):
+    return templates.TemplateResponse(request, "equipment.html", _context(
+        request, rows=db.list_equipment(),
+        statuses=db.EQUIPMENT_STATUSES, message=message, error=error,
+    ))
+
+
+@router.post("/equipment")
+def equipment_create(eqp_id: str = Form(...), eqp_name: str = Form(...),
+                     type: str | None = Form(None), status: str = Form("Idle")):
+    try:
+        db.create_equipment(eqp_id, eqp_name, type=_blank_to_none(type), status=status)
+    except ValueError as exc:
+        return _redirect("/equipment", error=str(exc))
+    return _redirect("/equipment", message="설비 등록 완료")
+
+
+@router.post("/equipment/{eqp_id}/update")
+def equipment_update(eqp_id: str, eqp_name: str | None = Form(None),
+                     type: str | None = Form(None), status: str | None = Form(None)):
+    try:
+        row = db.update_equipment(eqp_id, eqp_name=_blank_to_none(eqp_name),
+                                  type=_blank_to_none(type),
+                                  status=_blank_to_none(status))
+    except ValueError as exc:
+        return _redirect("/equipment", error=str(exc))
+    if row is None:
+        return _redirect("/equipment", error=f"설비 {eqp_id} 을(를) 찾을 수 없습니다")
+    return _redirect("/equipment", message="설비 수정 완료")
+
+
+@router.post("/equipment/{eqp_id}/delete")
+def equipment_delete(eqp_id: str):
+    try:
+        deleted = db.delete_equipment(eqp_id)
+    except ValueError as exc:
+        return _redirect("/equipment", error=str(exc))
+    if not deleted:
+        return _redirect("/equipment", error=f"설비 {eqp_id} 을(를) 찾을 수 없습니다")
+    return _redirect("/equipment", message="설비 삭제 완료")
+
+
+# --------------------------------------------------------------------------- #
+# 제품 (product master)
+# --------------------------------------------------------------------------- #
+
+@router.get("/products")
+def products(request: Request, message: str | None = None, error: str | None = None):
+    return templates.TemplateResponse(request, "products.html", _context(
+        request, rows=db.list_products(), message=message, error=error,
+    ))
+
+
+@router.post("/products")
+def product_create(product_code: str = Form(...), product_name: str = Form(...),
+                   tech_node: str | None = Form(None)):
+    try:
+        db.create_product(product_code, product_name, _blank_to_none(tech_node))
+    except ValueError as exc:
+        return _redirect("/products", error=str(exc))
+    return _redirect("/products", message="제품 등록 완료")
+
+
+@router.post("/products/{product_code}/update")
+def product_update(product_code: str, product_name: str | None = Form(None),
+                   tech_node: str | None = Form(None)):
+    try:
+        row = db.update_product(product_code,
+                                product_name=_blank_to_none(product_name),
+                                tech_node=_blank_to_none(tech_node))
+    except ValueError as exc:
+        return _redirect("/products", error=str(exc))
+    if row is None:
+        return _redirect("/products", error=f"제품 {product_code} 을(를) 찾을 수 없습니다")
+    return _redirect("/products", message="제품 수정 완료")
+
+
+@router.post("/products/{product_code}/delete")
+def product_delete(product_code: str):
+    try:
+        deleted = db.delete_product(product_code)
+    except ValueError as exc:
+        return _redirect("/products", error=str(exc))
+    if not deleted:
+        return _redirect("/products", error=f"제품 {product_code} 을(를) 찾을 수 없습니다")
+    return _redirect("/products", message="제품 삭제 완료")
 
 
 @router.get("/guide")

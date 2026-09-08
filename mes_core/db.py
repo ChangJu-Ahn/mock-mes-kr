@@ -185,6 +185,44 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+class DuplicateKey(ValueError):
+    """A master-data key is already taken.
+
+    A subclass of ``ValueError`` so callers that only care that the write was
+    rejected keep working, while HTTP can tell a taken key (409, a conflict
+    about state) apart from a malformed one (400, a conflict about input).
+    """
+
+
+def _require_code(value: str, field: str) -> str:
+    """Master-data keys are used in URLs and as join keys, so keep them sane."""
+    value = (value or "").strip()
+    if not value:
+        raise ValueError(f"{field} is required")
+    if len(value) > 40 or any(c.isspace() for c in value):
+        raise ValueError(f"{field} must be one word of 40 characters or fewer")
+    return value
+
+
+def _refuse_if_referenced(kind: str, code: str,
+                          refs: tuple[tuple[str, str, str], ...]) -> None:
+    """Raise if any row still points at ``code``.
+
+    ``refs`` is (table, column, human name). The message names what is in the
+    way so a caller can act on it rather than guessing.
+    """
+    with get_conn() as conn:
+        blocking = []
+        for table, column, label in refs:
+            n = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} = ?", (code,)).fetchone()[0]
+            if n:
+                blocking.append(f"{n} {label}{'s' if n > 1 else ''}")
+    if blocking:
+        raise ValueError(
+            f"cannot delete {kind} {code}: still referenced by " + ", ".join(blocking))
+
+
 def init_db() -> None:
     """Create all tables/indexes if they do not exist."""
     with get_conn() as conn:
@@ -222,6 +260,76 @@ def list_products() -> list[dict[str, Any]]:
 def list_product_codes() -> list[str]:
     with get_conn() as conn:
         return [r[0] for r in conn.execute("SELECT product_code FROM product ORDER BY product_code")]
+
+
+def get_product(product_code: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM product WHERE product_code = ?", (product_code,)).fetchone()
+        return dict(row) if row else None
+
+
+def create_product(product_code: str, product_name: str,
+                   tech_node: str | None = None) -> dict[str, Any]:
+    """Register a new product. The code is the key, so it must be free."""
+    product_code = _require_code(product_code, "product_code")
+    product_name = (product_name or "").strip()
+    if not product_name:
+        raise ValueError("product_name is required")
+    with get_conn() as conn:
+        if conn.execute("SELECT 1 FROM product WHERE product_code = ?",
+                        (product_code,)).fetchone():
+            raise DuplicateKey(f"product {product_code} already exists")
+        conn.execute(
+            "INSERT INTO product (product_code, product_name, tech_node) VALUES (?,?,?)",
+            (product_code, product_name, tech_node),
+        )
+    return get_product(product_code)
+
+
+def update_product(product_code: str, product_name: str | None = None,
+                   tech_node: str | None = None) -> dict[str, Any] | None:
+    """Rename a product or restate its node. Omitted fields keep their value.
+
+    The code itself is immutable: lots, BOM rows and inventory all carry it and
+    nothing declares a foreign key, so letting it change would silently orphan
+    them. Delete and recreate if a code is genuinely wrong.
+    """
+    if not get_product(product_code):
+        return None
+    sets, args = [], []
+    if product_name is not None:
+        product_name = product_name.strip()
+        if not product_name:
+            raise ValueError("product_name cannot be blank")
+        sets.append("product_name = ?"); args.append(product_name)
+    if tech_node is not None:
+        sets.append("tech_node = ?"); args.append(tech_node)
+    if sets:
+        args.append(product_code)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE product SET {', '.join(sets)} WHERE product_code = ?", args)
+    return get_product(product_code)
+
+
+def delete_product(product_code: str) -> bool:
+    """Remove a product, refusing while anything still points at it.
+
+    SQLite has ``foreign_keys=ON`` but this schema declares none, so a delete
+    would happily leave lots referencing a product that no longer exists. The
+    check belongs here instead.
+    """
+    if not get_product(product_code):
+        return False
+    _refuse_if_referenced("product", product_code, (
+        ("lot", "product_code", "lot"),
+        ("bom", "product_code", "BOM row"),
+        ("product_inventory", "product_code", "inventory row"),
+        ("product_result", "product_code", "product result"),
+    ))
+    with get_conn() as conn:
+        return conn.execute(
+            "DELETE FROM product WHERE product_code = ?", (product_code,)).rowcount > 0
 
 
 # --------------------------------------------------------------------------- #
@@ -796,9 +904,85 @@ def get_dashboard_summary() -> dict[str, Any]:
 
 
 
+EQUIPMENT_STATUSES = ("Run", "Idle", "Down")
+
+
+def _require_equipment_status(status: str) -> str:
+    """The console colour-codes these three, so reject anything else."""
+    status = (status or "").strip() or "Idle"
+    match = {s.lower(): s for s in EQUIPMENT_STATUSES}.get(status.lower())
+    if not match:
+        raise ValueError(
+            f"status must be one of {', '.join(EQUIPMENT_STATUSES)}, got {status!r}")
+    return match
+
+
 def list_equipment() -> list[dict[str, Any]]:
     with get_conn() as conn:
         return _rows(conn.execute("SELECT * FROM equipment ORDER BY eqp_id"))
+
+
+def get_equipment(eqp_id: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM equipment WHERE eqp_id = ?", (eqp_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def create_equipment(eqp_id: str, eqp_name: str, type: str | None = None,
+                     status: str = "Idle") -> dict[str, Any]:
+    """Register a new tool. The id is the key, so it must be free."""
+    eqp_id = _require_code(eqp_id, "eqp_id")
+    eqp_name = (eqp_name or "").strip()
+    if not eqp_name:
+        raise ValueError("eqp_name is required")
+    status = _require_equipment_status(status)
+    with get_conn() as conn:
+        if conn.execute("SELECT 1 FROM equipment WHERE eqp_id = ?", (eqp_id,)).fetchone():
+            raise DuplicateKey(f"equipment {eqp_id} already exists")
+        conn.execute(
+            "INSERT INTO equipment (eqp_id, eqp_name, type, status) VALUES (?,?,?,?)",
+            (eqp_id, eqp_name, type, status),
+        )
+    return get_equipment(eqp_id)
+
+
+def update_equipment(eqp_id: str, eqp_name: str | None = None, type: str | None = None,
+                     status: str | None = None) -> dict[str, Any] | None:
+    """Rename a tool, retype it or change its status. Omitted fields stand.
+
+    ``eqp_id`` is immutable for the same reason a product code is: process
+    results carry it with no foreign key to keep them honest.
+    """
+    if not get_equipment(eqp_id):
+        return None
+    sets, args = [], []
+    if eqp_name is not None:
+        eqp_name = eqp_name.strip()
+        if not eqp_name:
+            raise ValueError("eqp_name cannot be blank")
+        sets.append("eqp_name = ?"); args.append(eqp_name)
+    if type is not None:
+        sets.append("type = ?"); args.append(type)
+    if status is not None:
+        sets.append("status = ?"); args.append(_require_equipment_status(status))
+    if sets:
+        args.append(eqp_id)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE equipment SET {', '.join(sets)} WHERE eqp_id = ?", args)
+    return get_equipment(eqp_id)
+
+
+def delete_equipment(eqp_id: str) -> bool:
+    """Remove a tool, refusing while process history still points at it."""
+    if not get_equipment(eqp_id):
+        return False
+    _refuse_if_referenced("equipment", eqp_id, (
+        ("process_result", "eqp_id", "process result"),
+        ("product_result", "eqp_id", "product result"),
+    ))
+    with get_conn() as conn:
+        return conn.execute(
+            "DELETE FROM equipment WHERE eqp_id = ?", (eqp_id,)).rowcount > 0
 
 
 def list_step_codes() -> list[str]:

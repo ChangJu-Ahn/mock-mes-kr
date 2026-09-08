@@ -100,9 +100,77 @@ _TOOL_META: dict[str, dict[str, Any]] = {
         "example": {"step_code": "ETCH"},
         "notes": ["웹 콘솔의 /wip 화면과 동일한 집계입니다."],
     },
+    "list_products": {
+        "group": "기준정보 (Master)",
+        "kind": "read",
+        "returns": "제품 마스터 배열 — product_code, product_name, tech_node.",
+        "example": {},
+        "notes": ["REST 의 GET /api/products 와 동일한 데이터입니다."],
+    },
+    "create_product": {
+        "group": "기준정보 (Master)",
+        "kind": "write",
+        "returns": "생성된 제품 1건. 코드가 이미 있으면 {\"error\": ...}.",
+        "example": {"product_code": "AP10", "product_name": "AP10 Mobile SoC", "tech_node": "3nm"},
+        "notes": [
+            "product_code 는 키이므로 비어 있지 않은 공백 없는 40자 이하 문자열이어야 합니다.",
+            "앱을 재기동하면 초기 데이터셋으로 되돌아갑니다.",
+        ],
+    },
+    "update_product": {
+        "group": "기준정보 (Master)",
+        "kind": "write",
+        "returns": "수정된 제품 1건. 없으면 {\"error\": ...}.",
+        "example": {"product_code": "LX9", "product_name": "LX9 AP (rev B)"},
+        "notes": [
+            "전달한 필드만 바뀌고 나머지는 그대로 유지됩니다.",
+            "product_code 자체는 변경할 수 없습니다 — 로트·BOM·재고가 FK 없이 이 값을 참조합니다.",
+        ],
+    },
+    "delete_product": {
+        "group": "기준정보 (Master)",
+        "kind": "write",
+        "returns": "{\"deleted\": product_code}. 참조가 남아 있으면 {\"error\": ...}.",
+        "example": {"product_code": "AP10"},
+        "notes": [
+            "로트·BOM·제품재고·제품실적 중 하나라도 참조하면 거부하고 무엇이 막고 있는지 알려줍니다.",
+            "재기동하면 삭제한 기준 데이터가 복원됩니다.",
+        ],
+    },
+    "list_equipments": {
+        "group": "기준정보 (Master)",
+        "kind": "read",
+        "returns": "설비 마스터 배열 — eqp_id, eqp_name, type, status.",
+        "example": {},
+        "notes": ["status 는 Run / Idle / Down 중 하나입니다."],
+    },
+    "create_equipment": {
+        "group": "기준정보 (Master)",
+        "kind": "write",
+        "returns": "생성된 설비 1건. ID 가 이미 있으면 {\"error\": ...}.",
+        "example": {"eqp_id": "EQP-ETCH02", "eqp_name": "Etcher-B", "type": "Etcher", "status": "Idle"},
+        "notes": ["status 를 생략하면 Idle 로 등록됩니다."],
+    },
+    "update_equipment": {
+        "group": "기준정보 (Master)",
+        "kind": "write",
+        "returns": "수정된 설비 1건. 없으면 {\"error\": ...}.",
+        "example": {"eqp_id": "EQP-DIFF01", "eqp_name": "Furnace-A2", "status": "Down"},
+        "notes": [
+            "전달한 필드만 바뀝니다. eqp_id 는 변경할 수 없습니다.",
+            "status 는 Run / Idle / Down 만 허용합니다.",
+        ],
+    },
+    "delete_equipment": {
+        "group": "기준정보 (Master)",
+        "kind": "write",
+        "returns": "{\"deleted\": eqp_id}. 참조가 남아 있으면 {\"error\": ...}.",
+        "example": {"eqp_id": "EQP-ETCH02"},
+        "notes": ["공정실적·제품실적이 참조하는 설비는 삭제할 수 없습니다."],
+    },
 }
 
-_GROUP_ORDER = ["로트 (Lot)", "공정 (Process)", "재공 (WIP)", "기타 (Other)"]
+_GROUP_ORDER = ["로트 (Lot)", "공정 (Process)", "재공 (WIP)", "기준정보 (Master)", "기타 (Other)"]
 _DEFAULT_GROUP = "기타 (Other)"
 
 # "로트 투입(start_lot): create a new FAB lot ..." -> label / variant / summary

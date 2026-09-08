@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}제품 관리 · Mock MES{% endblock %}
+{% block breadcrumb %}마스터 / <strong>제품</strong>{% endblock %}
+{% block content %}
+<div data-page="products">
+  <header class="page-header">
+    <div>
+      <p class="page-eyebrow">Product Master</p>
+      <h1>제품 관리</h1>
+      <p class="page-description">제품 기준정보를 등록·수정·삭제합니다.</p>
+    </div>
+  </header>
+  <section class="data-panel">
+    <div class="panel-header"><h2>제품 등록</h2><span class="panel-meta">Create</span></div>
+    <form method="post" action="/products">
+      <div class="form-grid">
+        <label class="form-field">제품 코드 <span class="required">*</span><input name="product_code" placeholder="AP10" required></label>
+        <label class="form-field">제품명 <span class="required">*</span><input name="product_name" placeholder="AP10 Mobile SoC" required></label>
+        <label class="form-field">테크 노드<input name="tech_node" placeholder="3nm"></label>
+      </div>
+      <div class="form-footer"><p class="form-note">제품 코드는 키이며 등록 후 변경할 수 없습니다. 재기동하면 초기 데이터로 복원됩니다.</p><button type="submit">제품 등록</button></div>
+    </form>
+  </section>
+  <section class="data-panel">
+    <div class="panel-header"><h2>제품 목록</h2><span class="panel-meta">{{ rows|length }} 건</span></div>
+    <div class="table-wrap">
+      <table><thead><tr><th>제품 코드</th><th>제품명 · 테크 노드</th><th>관리</th></tr></thead><tbody>
+      {% for r in rows %}<tr>
+        <td><strong>{{ r.product_code }}</strong></td>
+        <td><form method="post" action="/products/{{ r.product_code }}/update" class="inline-form">
+          <input name="product_name" value="{{ r.product_name }}" aria-label="{{ r.product_code }} 제품명">
+          <input name="tech_node" value="{{ r.tech_node or '' }}" aria-label="{{ r.product_code }} 테크 노드">
+          <button type="submit">저장</button>
+        </form></td>
+        <td><form method="post" action="/products/{{ r.product_code }}/delete"><button type="submit" class="button-danger" aria-label="제품 {{ r.product_code }} 삭제">삭제</button></form></td>
+      </tr>
+      {% else %}<tr><td colspan="3" class="empty-state">등록된 제품이 없습니다.</td></tr>{% endfor %}
+      </tbody></table>
+    </div>
+  </section>
+</div>
+{% endblock %}

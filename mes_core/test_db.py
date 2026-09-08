@@ -4,6 +4,7 @@ import importlib
 import os
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 TEST_DB = Path(__file__).resolve().parents[1] / "data" / "mes_core_unit_test.db"
@@ -426,6 +427,48 @@ class DashboardTests(DbTestBase):
         self.assertEqual(s["wip_total_lots"], sum(w["lot_count"] for w in s["wip_by_step"]))
 
 
+class TimeArgumentTests(DbTestBase):
+    def test_start_lot_accepts_explicit_start_date(self):
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25, start_date="2026-08-30")
+        self.assertEqual(lot["start_date"], "2026-08-30")
+
+    def test_start_lot_defaults_to_today(self):
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25)
+        self.assertRegex(lot["start_date"], r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_process_result_keeps_supplied_times(self):
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25)
+        self.db.register_process_result(
+            lot["lot_id"], "PHOTO", in_qty=25,
+            in_time="2026-08-30T01:00:00+00:00",
+            out_time="2026-08-30T02:00:00+00:00",
+        )
+        rows = self.db.list_process_results(lot_id=lot["lot_id"])
+        self.assertEqual(rows[0]["in_time"], "2026-08-30T01:00:00+00:00")
+        self.assertEqual(rows[0]["out_time"], "2026-08-30T02:00:00+00:00")
+
+    def test_auto_fab_receipt_is_dated_from_out_time(self):
+        """A lot that finished last week must not book its SEMI receipt today."""
+        self._seed_master()
+        lot = self.db.start_lot("P1", 25)
+        self.db.register_process_result(
+            lot["lot_id"], "PHOTO", in_qty=25,
+            in_time="2026-08-30T01:00:00+00:00",
+            out_time="2026-08-30T02:00:00+00:00",
+        )
+        self.db.register_process_result(
+            lot["lot_id"], "TEST", in_qty=25, result="Pass",
+            in_time="2026-08-30T03:00:00+00:00",
+            out_time="2026-08-30T05:00:00+00:00",
+        )
+        auto = self.db.list_product_results(source="AUTO_FAB")
+        self.assertEqual(len(auto), 1)
+        self.assertEqual(auto[0]["result_date"], "2026-08-30")
+
+
 class SeedTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -469,6 +512,82 @@ class SeedTests(unittest.TestCase):
     def test_wip_only_non_done(self):
         wip = self.db.get_wip()
         self.assertEqual(sum(w["lot_count"] for w in wip), 10)  # 2 Hold + 8 Running
+
+    # --- time axis ---------------------------------------------------------
+
+    def _results(self):
+        rows = self.db.list_process_results(limit=500)
+        self.assertEqual(len(rows), 91)
+        return rows
+
+    def test_process_results_have_distinct_in_and_out_times(self):
+        for r in self._results():
+            self.assertLess(r["in_time"], r["out_time"], r["lot_id"] + r["step_code"])
+
+    def test_process_results_span_more_than_two_days(self):
+        rows = self._results()
+        lo = min(r["in_time"] for r in rows)
+        hi = max(r["out_time"] for r in rows)
+        span_h = (
+            datetime.fromisoformat(hi) - datetime.fromisoformat(lo)
+        ).total_seconds() / 3600
+        self.assertGreater(span_h, 48)
+        self.assertLess(span_h, 96)
+
+    def test_no_process_result_is_in_the_future(self):
+        now = datetime.now(timezone.utc).isoformat()
+        for r in self._results():
+            self.assertLessEqual(r["out_time"], now)
+
+    def test_ids_are_assigned_in_chronological_order(self):
+        """The console lists 'recent' results by id DESC, so id must track time."""
+        rows = sorted(self._results(), key=lambda r: r["id"])
+        times = [r["out_time"] for r in rows]
+        self.assertEqual(times, sorted(times))
+
+    def test_steps_within_a_lot_run_in_route_order(self):
+        by_lot = {}
+        for r in self._results():
+            by_lot.setdefault(r["lot_id"], []).append(r)
+        for lot_id, rows in by_lot.items():
+            rows.sort(key=lambda r: r["id"])
+            for prev, cur in zip(rows, rows[1:]):
+                self.assertLessEqual(prev["out_time"], cur["in_time"], lot_id)
+
+    def test_one_equipment_never_runs_two_lots_at_once(self):
+        by_eqp = {}
+        for r in self._results():
+            if r["eqp_id"]:
+                by_eqp.setdefault(r["eqp_id"], []).append(r)
+        for eqp_id, rows in by_eqp.items():
+            rows.sort(key=lambda r: r["in_time"])
+            for prev, cur in zip(rows, rows[1:]):
+                self.assertLessEqual(prev["out_time"], cur["in_time"], eqp_id)
+
+    def test_lot_start_date_precedes_its_first_step(self):
+        by_lot = {}
+        for r in self._results():
+            by_lot.setdefault(r["lot_id"], []).append(r)
+        for lot in self.db.list_lots(limit=100):
+            rows = by_lot.get(lot["lot_id"])
+            if not rows:
+                continue
+            first_in = min(r["in_time"] for r in rows)
+            self.assertLessEqual(lot["start_date"], first_in[:10], lot["lot_id"])
+
+    def test_lot_start_dates_are_not_all_the_same_day(self):
+        days = {l["start_date"] for l in self.db.list_lots(limit=100)}
+        self.assertGreater(len(days), 1)
+
+    def test_auto_fab_receipts_follow_their_lots(self):
+        finals = {}
+        for r in self._results():
+            if r["step_code"] == "TEST":
+                finals[r["lot_id"]] = r["out_time"][:10]
+        auto = self.db.list_product_results(source="AUTO_FAB", limit=100)
+        self.assertEqual(len(auto), 6)
+        for row in auto:
+            self.assertEqual(row["result_date"], finals[row["lot_id"]])
 
 
 class KeyStabilityTests(unittest.TestCase):

@@ -279,7 +279,7 @@ MCP endpoint: `http://localhost:8001/mcp`
 Run tests:
 
 ```bash
-python -m unittest mes_core.test_db api.tests.test_app mcp_server.test_server
+python -m unittest mes_core.test_db mes_core.test_schedule api.tests.test_app mcp_server.test_server
 ```
 
 ---
@@ -351,9 +351,45 @@ Re-seeded on every cold start (deterministic):
 | Product inventory rows | 7 (SEMI + FIN across products) |
 | Product results | 10 (6 AUTO_FAB + 3 AUTO_PACK + 1 MANUAL) |
 
-> **Note:** the database is ephemeral. The counts and identifiers above are
-> re-created identically on every cold start; the process timestamps are not
-> (see below). Do not store anything you need to keep.
+> **Note:** the database is ephemeral. All data above is re-created identically
+> on every cold start. Do not store anything you need to keep.
+
+### Time axis
+
+Seeded process results are not stamped with "now". They are laid out over
+roughly 65 hours ending at an **anchor**, so the dataset has a usable time
+dimension: 16 lots enter the fab 4 hours apart, each step takes a plausible
+number of minutes, and a given tool never runs two lots at once.
+
+| | |
+|---|---|
+| Anchor | `MES_ANCHOR` env var (UTC ISO 8601). Unset → current time. |
+| Span | ~65 h before the anchor |
+| Release interval | 240 min between lots |
+| Ordering | rows are inserted oldest-first, so `id` tracks time |
+
+The anchor is fixed at **deployment** time, not at container start. The
+container scales to zero and its storage is ephemeral, so it reseeds on every
+cold start — recomputing the anchor there would shift the whole dataset out
+from under a workshop in progress.
+
+**The data ages.** A month after deploying, the newest process result is a
+month old. Redeploy to move it forward:
+
+```bash
+az deployment group create -g <rg> -f infra/main.bicep
+```
+
+Pass `mesAnchor` explicitly to pin it for a reproducible demo:
+
+```bash
+az deployment group create -g <rg> -f infra/main.bicep -p mesAnchor=2026-09-04T00:00:00Z
+```
+
+Timing uses its own random seed, separate from the one that decides lots,
+defects and yields. That separation is deliberate: it keeps the dataset
+(16 lots, 91 process results, the defect mix) byte-identical to earlier
+releases so downstream demos that hardcode those numbers keep working.
 
 ### Data durability and what can delete it
 

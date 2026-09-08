@@ -3,6 +3,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from api import mcp_spec
 from api.auth import require_api_key
 from mes_core import db
 
@@ -13,10 +14,22 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key)])
 # Models
 # --------------------------------------------------------------------------- #
 
+class McpSurface(BaseModel):
+    """Pointer to the sibling agent surface, so `/api` never looks like the whole story."""
+
+    endpoint: str
+    docs: str
+    spec: str
+    transport: str
+    scope: str
+    tools: list[str]
+
+
 class ApiIndex(BaseModel):
     name: str
     docs: str
     endpoints: list[str]
+    mcp: McpSurface
 
 
 class HealthResponse(BaseModel):
@@ -143,6 +156,14 @@ def api_index() -> dict[str, Any]:
             "GET|PUT /api/bom",
             "DELETE /api/bom/{bom_id}",
         ],
+        "mcp": {
+            "endpoint": mcp_spec.MCP_PATH,
+            "docs": mcp_spec.MCP_DOCS_PATH,
+            "spec": mcp_spec.MCP_SPEC_PATH,
+            "transport": "streamable-http",
+            "scope": "Process · Lot (lot history, process results, WIP are NOT in this REST API)",
+            "tools": mcp_spec.tool_names(),
+        },
     }
 
 

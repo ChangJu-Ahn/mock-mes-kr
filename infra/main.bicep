@@ -28,8 +28,8 @@ param revisionSuffix string = 'r${utcNow('yyMMddHHmmss')}'
 @description('Demo API key required in the X-API-Key header on all REST /api/* and MCP /mcp calls. Web console + /api/docs stay open.')
 param apiKey string = 'changjuahn'
 
-@description('Instant the newest seeded process result finishes (UTC, ISO 8601). The /data volume is EmptyDir and the app scales to zero, so the seed re-runs on every cold start; pinning the anchor at deploy time keeps a restart from shifting the dataset out from under a workshop in progress. Redeploy to move the data forward.')
-param mesAnchor string = utcNow('yyyy-MM-ddTHH:mm:ssZ')
+@description('Overrides the instant the newest seeded process result finishes (UTC, ISO 8601). Leave empty: the image pins a fixed default anchor, which is what keeps the dataset byte-identical across restarts and redeploys so external stores keyed to its in/out time windows stay valid. Set it only to move the whole dataset forward deliberately.')
+param mesAnchor string = ''
 
 var dbPath = '/data/mes.db'
 var dbEnv = [

@@ -42,12 +42,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Work out image tags
+        id: tags
+        # Every build publishes an immutable :sha tag. Only main moves
+        # :latest, which is what the deployed Container App pulls on every
+        # replica start -- otherwise a push to any feature branch silently
+        # replaces production with unreviewed code.
+        run: |
+          repo="ghcr.io/changju-ahn/${{ matrix.image }}"
+          {
+            echo 'value<<TAGS_EOF'
+            echo "$repo:${{ github.sha }}"
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "$repo:latest"
+            fi
+            echo 'TAGS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
-          tags: |
-            ghcr.io/changju-ahn/${{ matrix.image }}:latest
-            ghcr.io/changju-ahn/${{ matrix.image }}:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.value }}

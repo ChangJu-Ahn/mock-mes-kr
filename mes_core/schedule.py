@@ -42,6 +42,17 @@ TRANSPORT_MIN = (10, 40)
 
 ANCHOR_ENV = "MES_ANCHOR"
 
+# The instant the newest seeded process result finishes, when nothing overrides
+# it. A constant rather than a clock reading, because the whole dataset hangs
+# off it: every (lot, step) in_time/out_time window is measured back from here.
+#
+# The /data volume is EmptyDir and the app scales to zero, so the seed re-runs
+# on every replica start and again on every deploy. Anchoring to "now" would
+# hand out different windows each time, and external stores that record sensor
+# data against those windows would silently stop lining up. Pinning it here
+# makes a rebuilt database byte-identical to the one it replaced.
+DEFAULT_ANCHOR = "2026-09-01T00:00:00+00:00"
+
 
 class PlannedRun(Protocol):
     lot_key: Any
@@ -59,13 +70,11 @@ def iso(dt: datetime) -> str:
 def resolve_anchor() -> datetime:
     """The instant the newest process result finishes.
 
-    Read from ``MES_ANCHOR`` so it is fixed at deployment time rather than
-    recomputed on every cold start. A container that restarts mid-workshop
-    must not move the dataset out from under a running exercise.
+    Defaults to :data:`DEFAULT_ANCHOR` so the dataset is identical on every
+    cold start *and* every deploy. ``MES_ANCHOR`` overrides it for a
+    deliberate move; an empty value is treated as unset.
     """
-    raw = os.environ.get(ANCHOR_ENV, "").strip()
-    if not raw:
-        return datetime.now(timezone.utc).replace(microsecond=0)
+    raw = os.environ.get(ANCHOR_ENV, "").strip() or DEFAULT_ANCHOR
     if raw.endswith(("Z", "z")):
         raw = raw[:-1] + "+00:00"
     parsed = datetime.fromisoformat(raw)

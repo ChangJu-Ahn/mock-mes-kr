@@ -2,6 +2,7 @@
 
 import importlib
 import os
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -587,6 +588,222 @@ class SeedTests(unittest.TestCase):
         self.assertEqual(len(auto), 6)
         for row in auto:
             self.assertEqual(row["result_date"], finals[row["lot_id"]])
+
+
+class KeyStabilityTests(unittest.TestCase):
+    """The seed's key set is a public contract.
+
+    The deployed app stores its SQLite DB on an ephemeral EmptyDir volume and
+    re-runs ``mes_core.seed`` from an init container on every replica start, so
+    with scale-to-zero the whole database is wiped and rebuilt routinely. That
+    is only safe because ``seed()`` is deterministic (``random.Random(42)``):
+    the same identifiers come back every time.
+
+    External demos connect to this MES by those identifiers, so anything that
+    makes the seed non-reproducible -- dropping the fixed RNG seed, renaming a
+    product, changing the lot count -- would silently break them on the next
+    cold start. These tests turn that implicit property into an enforced one.
+    """
+
+    DB = Path(__file__).resolve().parents[1] / "data" / "mes_key_stability_test.db"
+
+    LOTS = tuple(f"LOT{i:04d}" for i in range(1, 17))
+    PRODUCTS = ("DDR5", "LX9", "NAND", "PMIC")
+    MATERIALS = ("BOND-WIRE", "DOPANT-B", "GAS-AR", "GAS-SIH4", "MOLD-EMC", "PR-EUV",
+                 "RAW-WAFER-300", "RETICLE-5NM", "SLURRY-CMP", "SOLDER-BALL",
+                 "SUBSTRATE", "TARGET-CU")
+    STEPS = ("DIFF", "PHOTO", "ETCH", "IMPL", "CVD", "CMP", "METRO", "TEST", "PKG")
+    EQUIPMENT = ("EQP-CMP01", "EQP-CVD01", "EQP-DIFF01", "EQP-ETCH01", "EQP-IMPL01",
+                 "EQP-PHOT01", "EQP-PHOT02", "EQP-PKG01", "EQP-TEST01")
+    BOM_IDS = tuple(range(1, 49))
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MES_DB_PATH"] = str(cls.DB)
+        cls.DB.parent.mkdir(exist_ok=True)
+        from mes_core import db, seed
+        importlib.reload(db)
+        importlib.reload(seed)
+        cls.db, cls.seed = db, seed
+
+    @classmethod
+    def tearDownClass(cls):
+        for f in cls.DB.parent.glob(cls.DB.name + "*"):
+            f.unlink(missing_ok=True)
+
+    def _keys(self) -> dict[str, list]:
+        db = self.db
+        return {
+            "lots": sorted(l["lot_id"] for l in db.list_lots()),
+            "products": sorted(p["product_code"] for p in db.list_products()),
+            "materials": sorted(m["material_code"] for m in db.list_materials()),
+            "steps": db.list_step_codes(),
+            "equipment": sorted(e["eqp_id"] for e in db.list_equipment()),
+            "bom": sorted(b["id"] for b in db.list_bom()),
+        }
+
+    def _process_times(self) -> list[tuple]:
+        rows = self.db.list_process_results(limit=500)
+        return [(r["id"], r["in_time"], r["out_time"]) for r in rows]
+
+    def test_seed_produces_the_documented_key_baseline(self):
+        self.seed.seed()
+        keys = self._keys()
+        self.assertEqual(keys["lots"], list(self.LOTS))
+        self.assertEqual(keys["products"], sorted(self.PRODUCTS))
+        self.assertEqual(keys["materials"], sorted(self.MATERIALS))
+        self.assertEqual(keys["steps"], list(self.STEPS))  # route order matters
+        self.assertEqual(keys["equipment"], sorted(self.EQUIPMENT))
+        self.assertEqual(keys["bom"], list(self.BOM_IDS))
+
+    def test_reseeding_after_mutation_restores_identical_keys(self):
+        """Simulates an ACA cold start: wipe + re-seed must be a no-op on keys."""
+        self.seed.seed()
+        before = self._keys()
+
+        # Mutate the way a demo would: add a lot, delete a BOM row.
+        self.db.start_lot("LX9", 25)
+        self.db.delete_bom(before["bom"][0])
+        self.assertNotEqual(self._keys(), before)
+
+        self.seed.seed()
+        self.assertEqual(self._keys(), before)
+
+    def test_bom_ids_are_stable_because_autoincrement_is_reset(self):
+        # BOM is the only deletable entity, and it is keyed by AUTOINCREMENT.
+        # reset_db() clears sqlite_sequence, so ids restart at 1 -- without that,
+        # every re-seed would hand out fresh ids and break BOM-keyed demos.
+        self.seed.seed()
+        first = sorted(b["id"] for b in self.db.list_bom())
+        self.seed.seed()
+        self.assertEqual(sorted(b["id"] for b in self.db.list_bom()), first)
+        self.assertEqual(first[0], 1)
+
+    def test_keys_are_stable_even_though_the_clock_moves(self):
+        """Wall-clock time passing between two cold starts changes nothing.
+
+        Deliberately exercises the real clock rather than patching a helper,
+        so this holds however the seed derives its timestamps.
+        """
+        pinned = os.environ.pop("MES_ANCHOR", None)  # cold-start default
+        try:
+            self.seed.seed()
+            keys, times = self._keys(), self._process_times()
+            self.assertTrue(times)
+
+            time.sleep(1.1)  # timestamps have second precision
+            self.seed.seed()
+
+            self.assertEqual(self._keys(), keys)
+            self.assertEqual(self._process_times(), times)
+        finally:
+            if pinned is not None:
+                os.environ["MES_ANCHOR"] = pinned
+
+
+class SeedImmutabilityTests(unittest.TestCase):
+    """A rebuilt database must be indistinguishable from the one it replaced.
+
+    ``/data`` is an EmptyDir volume and the app scales to zero, so the seed
+    re-runs on every replica start and again on every deploy. External systems
+    are built on top of this dataset -- notably sensor archives that record
+    readings against a lot's ``in_time``/``out_time`` window on a given tool.
+    If a restart or a redeploy handed out different windows, those archives
+    would silently stop lining up with the MES they describe.
+
+    So the contract is stronger than key stability: *every column of every
+    table* must come back byte-identical, timestamps included.
+    """
+
+    DB = Path(__file__).resolve().parents[1] / "data" / "mes_immutability_test.db"
+
+    # LOT0001's route, as an external store would have recorded it. Pinned in
+    # full because these windows are the join key: change the anchor, the
+    # schedule seed or the release interval and this fails loudly rather than
+    # quietly orphaning someone else's sensor data.
+    LOT0001_WINDOWS = (
+        ("DIFF", "EQP-DIFF01", "2026-08-29T07:13:00+00:00", "2026-08-29T08:58:00+00:00"),
+        ("PHOTO", "EQP-PHOT01", "2026-08-29T09:14:00+00:00", "2026-08-29T10:09:00+00:00"),
+        ("ETCH", "EQP-ETCH01", "2026-08-29T10:27:00+00:00", "2026-08-29T12:11:00+00:00"),
+        ("IMPL", "EQP-IMPL01", "2026-08-29T12:28:00+00:00", "2026-08-29T13:25:00+00:00"),
+        ("CVD", "EQP-CVD01", "2026-08-29T13:42:00+00:00", "2026-08-29T16:21:00+00:00"),
+        ("CMP", "EQP-CMP01", "2026-08-29T16:46:00+00:00", "2026-08-29T17:20:00+00:00"),
+        ("METRO", None, "2026-08-29T17:30:00+00:00", "2026-08-29T17:53:00+00:00"),
+        ("TEST", "EQP-TEST01", "2026-08-29T18:24:00+00:00", "2026-08-29T21:10:00+00:00"),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.pop("MES_ANCHOR", None)  # exercise the shipped default
+        os.environ["MES_DB_PATH"] = str(cls.DB)
+        cls.DB.parent.mkdir(exist_ok=True)
+        from mes_core import db, seed
+        importlib.reload(db)
+        importlib.reload(seed)
+        cls.db, cls.seed = db, seed
+
+    @classmethod
+    def tearDownClass(cls):
+        for f in cls.DB.parent.glob(cls.DB.name + "*"):
+            f.unlink(missing_ok=True)
+
+    def _snapshot(self) -> dict[str, list[tuple]]:
+        """Every row of every table, ordered, as comparable tuples."""
+        out = {}
+        with self.db.get_conn() as conn:
+            for table in self.db.TABLES:
+                cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+                order = ", ".join(f'"{c}"' for c in cols)
+                rows = conn.execute(f"SELECT * FROM {table} ORDER BY {order}").fetchall()
+                out[table] = [tuple(r) for r in rows]
+        return out
+
+    def test_reseeding_reproduces_every_table_byte_for_byte(self):
+        self.seed.seed()
+        before = self._snapshot()
+        self.assertTrue(all(before[t] for t in self.db.TABLES))
+
+        time.sleep(1.1)  # a later cold start must not mean later timestamps
+        self.seed.seed()
+
+        after = self._snapshot()
+        for table in self.db.TABLES:
+            self.assertEqual(after[table], before[table], table)
+
+    def test_reseeding_after_a_deletion_restores_it_byte_for_byte(self):
+        """The console's unauthenticated BOM delete must be self-healing."""
+        self.seed.seed()
+        before = self._snapshot()
+
+        self.db.delete_bom(before["bom"][0][0])
+        self.db.start_lot("LX9", 25)
+        self.assertNotEqual(self._snapshot(), before)
+
+        self.seed.seed()
+        self.assertEqual(self._snapshot(), before)
+
+    def test_lot0001_windows_match_the_published_baseline(self):
+        self.seed.seed()
+        rows = sorted(self.db.list_process_results(lot_id="LOT0001", limit=50),
+                      key=lambda r: r["id"])
+        got = tuple((r["step_code"], r["eqp_id"], r["in_time"], r["out_time"])
+                    for r in rows)
+        self.assertEqual(got, self.LOT0001_WINDOWS)
+
+    def test_every_window_is_a_usable_sensor_interval(self):
+        """Each row must describe a real span on a real tool, in the past.
+
+        A zero-length or inverted window would give a sensor archive nothing
+        to bracket its readings with.
+        """
+        self.seed.seed()
+        rows = self.db.list_process_results(limit=500)
+        self.assertEqual(len(rows), 91)
+        now = datetime.now(timezone.utc).isoformat()
+        for r in rows:
+            where = f"{r['lot_id']}/{r['step_code']}"
+            self.assertLess(r["in_time"], r["out_time"], where)
+            self.assertLess(r["out_time"], now, where)
 
 
 if __name__ == "__main__":

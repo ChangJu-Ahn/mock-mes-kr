@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% set mcp_url = base_url ~ spec.endpoint %}
+{% block title %}MCP 문서 · Mock MES{% endblock %}
+{% block breadcrumb %}도움말 / <strong>MCP 문서</strong>{% endblock %}
+{% block content %}
+<div data-page="mcp-docs">
+
+  <section class="guide-hero">
+    <p class="page-eyebrow">Model Context Protocol · Agent surface</p>
+    <h1>MCP 서버 문서</h1>
+    <p>이 MES에는 에이전트가 붙을 수 있는 창구가 <strong>두 개</strong>입니다. REST API는 <code>/api/docs</code>(Swagger)에 문서가 있지만,
+      <strong>로트와 공정은 REST에 없고 MCP 서버에만</strong> 있습니다. 이 페이지가 그 MCP 쪽 문서이며, 아래 내용은 실행 중인
+      <code>{{ spec.server_name }}</code> 서버의 도구 목록을 <strong>실시간으로 읽어</strong> 만듭니다.</p>
+    <div class="page-actions">
+      <a class="button" href="{{ spec.spec_path }}">MCP 스펙 JSON 열기</a>
+      <a class="button button-secondary" href="/api/docs">REST API 문서 비교</a>
+      <a class="button button-secondary" href="/guide">사용법</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header"><h2>MCP가 무엇인가요?</h2><span class="panel-meta">Why a second surface</span></div>
+    <p class="page-description">MCP(Model Context Protocol)는 LLM 에이전트가 외부 시스템의 <em>도구</em>를 발견하고 호출하기 위한 표준입니다.
+      REST가 "URL과 HTTP 메서드"를 노출한다면, MCP는 <strong>이름 · 설명 · JSON 스키마를 가진 도구</strong>를 노출합니다.
+      에이전트는 <code>tools/list</code>로 무엇을 할 수 있는지 스스로 알아내고, <code>tools/call</code>로 실행합니다.
+      그래서 이 데모에서는 사람이 쓰기 좋은 REST와, 에이전트가 쓰기 좋은 MCP를 나란히 두고 <strong>같은 SQLite DB</strong>에 붙였습니다.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>비교</th><th>REST API</th><th>MCP 서버</th></tr></thead>
+        <tbody>
+          <tr><td><strong>엔드포인트</strong></td><td class="mono">/api</td><td class="mono">{{ spec.endpoint }}</td></tr>
+          <tr><td><strong>문서</strong></td><td class="mono">/api/docs · /api/openapi.json</td><td class="mono">{{ spec.docs_path }} · {{ spec.spec_path }}</td></tr>
+          <tr><td><strong>담당 범위</strong></td><td>Product · Material · BOM</td><td><strong>{{ spec.scope }}</strong> (로트 이력 · 공정실적 · 재공)</td></tr>
+          <tr><td><strong>호출 방식</strong></td><td>HTTP 메서드 + 경로</td><td>JSON-RPC <span class="mono">tools/call</span></td></tr>
+          <tr><td><strong>인증</strong></td><td class="mono">{{ spec.api_key_header }}: {{ spec.api_key }}</td><td class="mono">{{ spec.api_key_header }}: {{ spec.api_key }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="form-note">※ 로트 이력을 <strong>사람이</strong> 볼 때는 웹 콘솔 <a href="/lots">/lots</a> · <span class="mono">/lots/{lot_id}</span> 화면을 쓰세요. REST에는 해당 엔드포인트가 없습니다.</p>
+  </section>
+
+  <section>
+    <div class="panel-header"><h2>연결 정보</h2><span class="panel-meta">Connection</span></div>
+    <div class="summary-grid">
+      <article class="summary-card"><span>Endpoint</span><strong class="mono doc-wrap">{{ mcp_url }}</strong><small class="badge badge-running">HTTP</small></article>
+      <article class="summary-card"><span>Transport</span><strong class="mono">{{ spec.transport }}</strong><small class="badge badge-{{ 'done' if spec.stateless else 'idle' }}">{{ 'stateless' if spec.stateless else 'stateful' }}</small></article>
+      <article class="summary-card"><span>Auth header</span><strong class="mono">{{ spec.api_key_header }}: {{ spec.api_key }}</strong><small class="badge badge-manual">DEMO KEY</small></article>
+      <article class="summary-card"><span>Server name</span><strong class="mono">{{ spec.server_name }}</strong><small class="badge badge-normal">MCP {{ spec.protocol_version }}</small></article>
+      <article class="summary-card"><span>Tools</span><strong>{{ spec.tool_count }}개</strong><small class="badge badge-low">{{ spec.write_tools|length }} write · {{ spec.read_tools|length }} read</small></article>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header"><h2>클라이언트 설정</h2><span class="panel-meta">VS Code · Claude Desktop · Python · curl</span></div>
+    <div class="doc-tabs" data-doc-tabs>
+      <div class="doc-tablist" role="tablist" aria-label="클라이언트 설정 예시">
+        <button type="button" class="doc-tab is-active" role="tab" aria-selected="true" data-doc-tab="vscode">VS Code</button>
+        <button type="button" class="doc-tab" role="tab" aria-selected="false" data-doc-tab="claude">Claude Desktop</button>
+        <button type="button" class="doc-tab" role="tab" aria-selected="false" data-doc-tab="python">Python SDK</button>
+        <button type="button" class="doc-tab" role="tab" aria-selected="false" data-doc-tab="curl">curl</button>
+      </div>
+
+      <div class="doc-tabpanel is-active" role="tabpanel" data-doc-panel="vscode">
+        <p class="form-note"><code>.vscode/mcp.json</code> — 스트리머블 HTTP를 그대로 지원합니다.</p>
+        <div class="code-block"><button class="copy-btn" type="button" data-copy>복사</button><pre>{
+  "servers": {
+    "mock-mes": {
+      "type": "http",
+      "url": "{{ mcp_url }}",
+      "headers": { "{{ spec.api_key_header }}": "{{ spec.api_key }}" }
+    }
+  }
+}</pre></div>
+      </div>
+
+      <div class="doc-tabpanel" role="tabpanel" data-doc-panel="claude">
+        <p class="form-note"><code>claude_desktop_config.json</code> — stdio만 지원하는 클라이언트는 <code>mcp-remote</code> 브리지를 씁니다.</p>
+        <div class="code-block"><button class="copy-btn" type="button" data-copy>복사</button><pre>{
+  "mcpServers": {
+    "mock-mes": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote", "{{ mcp_url }}",
+        "--header", "{{ spec.api_key_header }}:{{ spec.api_key }}"
+      ]
+    }
+  }
+}</pre></div>
+      </div>
+
+      <div class="doc-tabpanel" role="tabpanel" data-doc-panel="python">
+        <p class="form-note"><code>pip install mcp</code> 후 실행하면 도구 목록과 호출 결과를 확인할 수 있습니다.</p>
+        <div class="code-block"><button class="copy-btn" type="button" data-copy>복사</button><pre>import asyncio
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+URL = "{{ mcp_url }}"
+HEADERS = {"{{ spec.api_key_header }}": "{{ spec.api_key }}"}
+
+async def main():
+    async with streamablehttp_client(URL, headers=HEADERS) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            for tool in (await session.list_tools()).tools:
+                print(tool.name)
+            lot = await session.call_tool("get_lot", {"lot_id": "LOT0001"})
+            print(lot.structuredContent)
+
+asyncio.run(main())</pre></div>
+      </div>
+
+      <div class="doc-tabpanel" role="tabpanel" data-doc-panel="curl">
+        <p class="form-note">스트리머블 HTTP는 SSE로 응답하므로 <code>Accept</code> 헤더에 두 타입을 모두 넣어야 합니다.</p>
+        <div class="code-block"><button class="copy-btn" type="button" data-copy>복사</button><pre># 1) 도구 목록
+curl -sN {{ mcp_url }} \
+  -H "{{ spec.api_key_header }}: {{ spec.api_key }}" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# 2) 로트 이력 조회
+curl -sN {{ mcp_url }} \
+  -H "{{ spec.api_key_header }}: {{ spec.api_key }}" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call",
+       "params":{"name":"get_lot","arguments":{"lot_id":"LOT0001"}}}'
+
+# 스키마만 빠르게 보고 싶다면 (인증 불필요)
+curl -s {{ base_url }}{{ spec.spec_path }}</pre></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header"><h2>도구 목록</h2><span class="panel-meta">{{ spec.tool_count }} tools · tools/list</span></div>
+    <div class="doc-toc">
+      {% for tool in spec.tools %}
+      <a class="doc-chip" href="#tool-{{ tool.name }}">
+        <span class="mono">{{ tool.name }}</span>
+        <small class="badge badge-{{ tool.kind }}">{{ '입력' if tool.kind == 'write' else '조회' }}</small>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% for group in spec.groups %}
+  <section>
+    <div class="panel-header"><h2>{{ group.name }}</h2><span class="panel-meta">{{ group.tools|length }}개 도구</span></div>
+    {% for tool in group.tools %}
+    <article class="panel tool-card" id="tool-{{ tool.name }}">
+      <div class="tool-head">
+        <div>
+          <h3 class="tool-sig mono">{{ tool.name }}(<span class="tool-args">{% for p in tool.params %}{{ p.name }}{% if not p.required %}?{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</span>)</h3>
+          <p class="tool-label">{{ tool.label }}{% if tool.variant %} · {{ tool.variant }}{% endif %}</p>
+        </div>
+        <span class="badge badge-{{ tool.kind }}">{{ 'WRITE' if tool.kind == 'write' else 'READ' }}</span>
+      </div>
+      <p class="page-description">{{ tool.summary }}</p>
+
+      <h4 class="tool-subhead">파라미터</h4>
+      <div class="table-wrap">
+        <table class="param-table">
+          <thead><tr><th>이름</th><th>타입</th><th>필수</th><th>기본값</th></tr></thead>
+          <tbody>
+            {% for p in tool.params %}
+            <tr>
+              <td class="mono"><strong>{{ p.name }}</strong></td>
+              <td class="mono muted">{{ p.type }}</td>
+              <td>{% if p.required %}<span class="badge badge-hot">필수</span>{% else %}<span class="badge badge-low">선택</span>{% endif %}</td>
+              <td class="mono muted">{{ p.default }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="empty-state">파라미터가 없습니다.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if tool.returns %}
+      <h4 class="tool-subhead">반환</h4>
+      <p class="form-note">{{ tool.returns }}</p>
+      {% endif %}
+
+      {% if tool.notes %}
+      <h4 class="tool-subhead">동작 규칙</h4>
+      <ul class="tool-notes">{% for note in tool.notes %}<li>{{ note }}</li>{% endfor %}</ul>
+      {% endif %}
+
+      <h4 class="tool-subhead">호출 예시</h4>
+      <div class="code-block"><button class="copy-btn" type="button" data-copy>복사</button><pre>{{ tool.call_example }}</pre></div>
+
+      <details class="tool-schema">
+        <summary>inputSchema (JSON Schema) 보기</summary>
+        <div class="code-block"><button class="copy-btn" type="button" data-copy>복사</button><pre>{{ tool.input_schema }}</pre></div>
+      </details>
+    </article>
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  <section class="panel">
+    <div class="panel-header"><h2>기계용 스펙</h2><span class="panel-meta">{{ spec.spec_path }}</span></div>
+    <p class="page-description">REST의 <code>/api/openapi.json</code>에 대응하는 MCP 쪽 스펙입니다. 인증 없이 열려 있으므로 에이전트가 붙기 전에 먼저 읽어볼 수 있습니다.
+      리소스(resources)와 프롬프트(prompts)는 제공하지 않고, 도구(tools)만 노출합니다.</p>
+    <div class="page-actions">
+      <a class="button button-secondary" href="{{ spec.spec_path }}">{{ spec.spec_path }} 열기</a>
+      <a class="button button-secondary" href="/api/openapi.json">/api/openapi.json 열기</a>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  document.querySelectorAll("[data-doc-tabs]").forEach((root) => {
+    const tabs = root.querySelectorAll("[data-doc-tab]");
+    const panels = root.querySelectorAll("[data-doc-panel]");
+    tabs.forEach((tab) => tab.addEventListener("click", () => {
+      tabs.forEach((t) => {
+        const on = t === tab;
+        t.classList.toggle("is-active", on);
+        t.setAttribute("aria-selected", String(on));
+      });
+      panels.forEach((p) => p.classList.toggle(
+        "is-active", p.dataset.docPanel === tab.dataset.docTab));
+    }));
+  });
+
+  document.querySelectorAll("[data-copy]").forEach((button) => {
+    // Captured once, before any click can overwrite it: reading the label after
+    // the await would latch "복사됨" on a rapid second click and never revert.
+    const original = button.textContent;
+    let revert;
+    button.addEventListener("click", async () => {
+      const code = button.parentElement?.querySelector("pre");
+      if (!code) return;
+      try {
+        await navigator.clipboard.writeText(code.textContent ?? "");
+        button.textContent = "복사됨";
+        clearTimeout(revert);
+        revert = setTimeout(() => { button.textContent = original; }, 1200);
+      } catch { /* clipboard blocked (http / permissions) — ignore */ }
+    });
+  });
+})();
+</script>
+{% endblock %}

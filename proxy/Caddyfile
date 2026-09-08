@@ -2,7 +2,8 @@
 #
 # Single external ingress on :8080 (Azure Container Apps terminates TLS and
 # forwards HTTP here). Routes:
-#   /mcp, /mcp/*  -> MCP server   (streamable HTTP, needs unbuffered streaming)
+#   /mcp-docs, /mcp-docs.json -> API      (MCP docs page, rendered by the console)
+#   /mcp, /mcp/*   -> MCP server   (streamable HTTP, needs unbuffered streaming)
 #   everything else -> API/web console
 #
 # Upstreams default to localhost (all containers share one network namespace
@@ -15,6 +16,15 @@
 }
 
 :8080 {
+	# /mcp-docs and /mcp-docs.json are the web console's MCP reference (served by
+	# the API container). They must NOT reach the MCP server. The @mcp matcher
+	# below already excludes them ("/mcp" is exact, "/mcp/*" needs a slash), but
+	# routing them explicitly first makes that intent impossible to break later.
+	@mcpdocs path /mcp-docs /mcp-docs.json
+	handle @mcpdocs {
+		reverse_proxy {$API_UPSTREAM:localhost:8000}
+	}
+
 	@mcp path /mcp /mcp/*
 	handle @mcp {
 		reverse_proxy {$MCP_UPSTREAM:localhost:8001} {

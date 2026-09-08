@@ -10,12 +10,13 @@ exposed through **three surfaces**:
 | --- | --- | --- | --- |
 | **Web console** | Human | `/` | All MES functions (view + input) + dashboard |
 | **REST API** | Agent / key | `/api` (docs: `/api/docs`) | Product · Material · BOM |
-| **MCP server** | Agent / key | `/mcp` (streamable HTTP) | Process · Lot |
+| **MCP server** | Agent / key | `/mcp` (docs: `/mcp-docs`) | Process · Lot |
 
 > **MVP / demo only.** The database is **ephemeral** and **re-seeded on every
-> cold start**, so every demo run gets a fresh, identical fab snapshot. A single
-> shared demo key (`changjuahn`) gates the agent surfaces; there is no real
-> security.
+> cold start**: every identifier comes back identical, while the process
+> timestamps move with the clock (see
+> [Data durability](#data-durability-and-what-can-delete-it)). A single shared
+> demo key (`changjuahn`) gates the agent surfaces; there is no real security.
 
 ---
 
@@ -138,6 +139,7 @@ flowchart LR
 | WIP | `/wip` | Non-Done lots grouped by step |
 | Equipment | `/equipment` | Equipment list |
 | Guide | `/guide` | Step-by-step usage walkthrough |
+| MCP docs | `/mcp-docs` | MCP tool reference + client config (see below) |
 
 ### REST API — `/api` (requires `X-API-Key: changjuahn`)
 
@@ -145,7 +147,7 @@ Interactive docs at **`/api/docs`** (open — no key needed to browse).
 
 | Method | Endpoint | 기능 |
 | --- | --- | --- |
-| `GET` | `/api` | Index + endpoint list |
+| `GET` | `/api` | Index + endpoint list + pointer to the MCP surface |
 | `GET` | `/api/health` | DB status + row counts |
 | `GET` | `/api/products` | Product list |
 | `GET` | `/api/product-inventory` | SEMI / FIN stock (`?product_code`, `?item_type`) |
@@ -172,6 +174,41 @@ Streamable HTTP (`stateless_http=True`). Seven tools:
 | `get_process_route` | Route steps (step_code?, eqp_type?, stage?) |
 | `list_process_results` | Process results (lot_id?, step_code?, result?, has_scrap?, ...) |
 | `get_wip` | Non-Done lots grouped by current step (step_code?) |
+
+> **Lot history is MCP-only.** There is deliberately no `GET /api/lots`; a human
+> reads a lot's step history at `/lots/{lot_id}` in the web console, and an agent
+> reads it with the `get_lot` tool.
+
+#### MCP docs — `/mcp-docs` + `/mcp-docs.json` (open, no key)
+
+Swagger can only describe the REST half, which made the MCP surface invisible to
+anyone browsing the site. The console therefore ships its own MCP reference,
+mirroring the REST pair:
+
+| | REST | MCP |
+| --- | --- | --- |
+| Human docs | `/api/docs` | **`/mcp-docs`** |
+| Machine spec | `/api/openapi.json` | **`/mcp-docs.json`** |
+
+`api/mcp_spec.py` builds both by calling `FastMCP.list_tools()` on the very same
+`mcp_server.server.mcp` object the MCP container serves — a local registry
+lookup, no network hop — so the page cannot drift from the running server. The
+page renders, per tool: signature, Korean/English description, a parameter table
+(type · required · default) derived from the live JSON Schema, the return shape,
+behavioural rules, a ready-to-paste `tools/call` envelope, and the raw
+`inputSchema`. It also carries copy-paste client configs for VS Code, Claude
+Desktop (via `mcp-remote`), the Python SDK, and `curl`.
+
+A test asserts that every tool the server exposes is documented, so adding a
+tool without documenting it fails CI.
+
+The connection URLs on the page are published as `https://` for any non-local
+host. Caddy listens on plaintext `:8080` and rewrites `X-Forwarded-Proto` to its
+own listener's scheme, so the request scheme reaching uvicorn is always `http`;
+echoing it back would hand out URLs that ACA (`allowInsecure: false`) redirects,
+and a redirected JSON-RPC `POST` breaks MCP clients and `curl -sN`. Set
+`MES_PUBLIC_BASE_URL` (e.g. `https://mes.example.com`) to override the origin
+outright when running behind a different proxy or on a sub-path.
 
 ---
 
@@ -216,6 +253,7 @@ asyncio.run(main())
 
 Popular MCP clients (e.g. Claude Desktop, VS Code) can point directly at
 `https://<fqdn>/mcp` (transport: streamable HTTP) with header `X-API-Key: changjuahn`.
+Ready-to-paste config for each client is on **`https://<fqdn>/mcp-docs`**.
 
 ---
 
@@ -313,8 +351,10 @@ Re-seeded on every cold start (deterministic):
 | Product inventory rows | 7 (SEMI + FIN across products) |
 | Product results | 10 (6 AUTO_FAB + 3 AUTO_PACK + 1 MANUAL) |
 
-> **Note:** the database is ephemeral. All data above is re-created identically
-> on every cold start. Do not store anything you need to keep.
+> **Note:** the database is ephemeral, but the seed is fully reproducible.
+> Every cold start and every redeploy rebuilds a **byte-identical** dataset —
+> same identifiers, same quantities, same timestamps. Nothing created at
+> runtime survives; nothing shipped in the seed ever changes.
 
 ### Time axis
 
@@ -325,30 +365,73 @@ number of minutes, and a given tool never runs two lots at once.
 
 | | |
 |---|---|
-| Anchor | `MES_ANCHOR` env var (UTC ISO 8601). Unset → current time. |
+| Anchor | **fixed constant** `2026-09-01T00:00:00+00:00` (`schedule.DEFAULT_ANCHOR`) |
+| Override | `MES_ANCHOR` env var (UTC ISO 8601) — deliberate moves only |
 | Span | ~65 h before the anchor |
 | Release interval | 240 min between lots |
 | Ordering | rows are inserted oldest-first, so `id` tracks time |
 
-The anchor is fixed at **deployment** time, not at container start. The
-container scales to zero and its storage is ephemeral, so it reseeds on every
-cold start — recomputing the anchor there would shift the whole dataset out
-from under a workshop in progress.
+**The anchor is a constant, not a clock reading.** Every
+`(lot_id, step_code)` pair therefore has a fixed `in_time` / `out_time`
+window that survives container restarts, redeploys and image rebuilds.
 
-**The data ages.** A month after deploying, the newest process result is a
-month old. Redeploy to move it forward:
+That is load-bearing, not cosmetic: external systems key off those windows.
+If `LOT0001`'s PHOTO step runs `09:00–09:30` on one deploy, the sensor data
+another store recorded for that tool during that half hour still lines up
+after the next deploy. Deriving the anchor from boot or deploy time would
+shift all 91 windows and silently invalidate everything stored against them,
+so neither does it.
+
+To move the whole dataset forward deliberately, pass the override:
 
 ```bash
-az deployment group create -g <rg> -f infra/main.bicep
-```
-
-Pass `mesAnchor` explicitly to pin it for a reproducible demo:
-
-```bash
-az deployment group create -g <rg> -f infra/main.bicep -p mesAnchor=2026-09-04T00:00:00Z
+az deployment group create -g <rg> -f infra/main.bicep -p mesAnchor=2026-10-01T00:00:00Z
 ```
 
 Timing uses its own random seed, separate from the one that decides lots,
 defects and yields. That separation is deliberate: it keeps the dataset
 (16 lots, 91 process results, the defect mix) byte-identical to earlier
 releases so downstream demos that hardcode those numbers keep working.
+
+### Data durability and what can delete it
+
+External systems connect to this MES **by identifier** (`LOT0001`, `LX9`,
+`RAW-WAFER-300`, …) and **by time window**, so it matters exactly what can
+make either disappear. Two things delete data, and the second is the one that
+actually fires in normal operation:
+
+| | What it removes | Trigger | Auth |
+| --- | --- | --- | --- |
+| `db.delete_bom()` | one BOM row | `DELETE /api/bom/{id}` | API key |
+| ″ | ″ | `POST /bom/{id}/delete` (console button) | **none** |
+| `db.reset_db()` | **every row in all 9 tables** | seed init container, **every replica start** | n/a |
+
+Nothing else deletes anything. There is no delete path for products,
+materials, lots, process results, inventory, equipment or process steps; **no
+MCP tool deletes anything** (all seven are read/create, so an autonomous agent
+cannot destroy demo state); and there is no scheduler, TTL or background
+cleanup.
+
+**Why the routine total wipe is harmless:** `seed()` is deterministic end to
+end. The business data comes from `random.Random(42)` over fixed master data,
+the timing from `Random(SCHEDULE_SEED)` against a constant anchor, and
+`reset_db()` clears `sqlite_sequence` so `AUTOINCREMENT` ids restart at 1. A
+wipe followed by a reseed is therefore a **no-op on every column**, not just
+on the keys. The practical consequence:
+
+- **Seeded rows survive indefinitely.** Identifiers *and* their time windows
+  are safe to hard-code in an external system.
+- **Anything created during a session does not.** A lot started via
+  `start_lot` is gone at the next cold start (scale-to-zero makes that
+  routine), and it is stamped with the wall clock rather than the anchor.
+
+This also means the open console delete is self-healing: a BOM removed there
+reappears on the next restart. Making storage persistent would *invert* that —
+a deletion would become permanent — so the ephemeral volume is deliberate, not
+an oversight.
+
+`SeedImmutabilityTests`, `KeyStabilityTests` and `DeletionSurfaceTests` pin all
+of this: that a reseed reproduces all nine tables byte for byte, the exact key
+baseline, and that BOM stays the only deletable entity. Adding a delete path,
+making the seed non-reproducible, or letting the anchor drift back to the
+clock fails CI.

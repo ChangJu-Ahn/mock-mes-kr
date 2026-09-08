@@ -4,6 +4,7 @@ import importlib
 import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TEST_DB = Path(__file__).resolve().parents[1] / "data" / "mes_core_unit_test.db"
 
@@ -522,6 +523,10 @@ class KeyStabilityTests(unittest.TestCase):
             "bom": sorted(b["id"] for b in db.list_bom()),
         }
 
+    def _process_times(self) -> list[tuple]:
+        rows = self.db.list_process_results(limit=500)
+        return [(r["id"], r["in_time"], r["out_time"]) for r in rows]
+
     def test_seed_produces_the_documented_key_baseline(self):
         self.seed.seed()
         keys = self._keys()
@@ -554,6 +559,25 @@ class KeyStabilityTests(unittest.TestCase):
         self.seed.seed()
         self.assertEqual(sorted(b["id"] for b in self.db.list_bom()), first)
         self.assertEqual(first[0], 1)
+
+    def test_keys_are_stable_even_though_the_clock_moves(self):
+        """A cold start re-seeds at a new wall-clock instant.
+
+        Identifiers are the contract and must survive that. Process timestamps
+        are read from the clock while the seed runs, so they are deliberately
+        *not* part of the contract: an external test must key off `LOT0001`,
+        never off the instant its DIFF step happened to be written.
+        """
+        self.seed.seed()
+        keys, times = self._keys(), self._process_times()
+        self.assertTrue(times)
+
+        with mock.patch.object(self.db, "_now_iso",
+                               return_value="2030-01-02T03:04:05+00:00"):
+            self.seed.seed()
+
+        self.assertEqual(self._keys(), keys)
+        self.assertNotEqual(self._process_times(), times)
 
 
 if __name__ == "__main__":

@@ -13,9 +13,10 @@ exposed through **three surfaces**:
 | **MCP server** | Agent / key | `/mcp` (docs: `/mcp-docs`) | Process · Lot |
 
 > **MVP / demo only.** The database is **ephemeral** and **re-seeded on every
-> cold start**, so every demo run gets a fresh, identical fab snapshot. A single
-> shared demo key (`changjuahn`) gates the agent surfaces; there is no real
-> security.
+> cold start**: every identifier comes back identical, while the process
+> timestamps move with the clock (see
+> [Data durability](#data-durability-and-what-can-delete-it)). A single shared
+> demo key (`changjuahn`) gates the agent surfaces; there is no real security.
 
 ---
 
@@ -350,8 +351,9 @@ Re-seeded on every cold start (deterministic):
 | Product inventory rows | 7 (SEMI + FIN across products) |
 | Product results | 10 (6 AUTO_FAB + 3 AUTO_PACK + 1 MANUAL) |
 
-> **Note:** the database is ephemeral. All data above is re-created identically
-> on every cold start. Do not store anything you need to keep.
+> **Note:** the database is ephemeral. The counts and identifiers above are
+> re-created identically on every cold start; the process timestamps are not
+> (see below). Do not store anything you need to keep.
 
 ### Data durability and what can delete it
 
@@ -379,6 +381,10 @@ ids, because `reset_db()` also clears `sqlite_sequence` so `AUTOINCREMENT`
 restarts at 1. The practical consequence:
 
 - **Seeded keys survive indefinitely.** Safe to hard-code in an external test.
+- **Timestamps do not.** `process_result.in_time` / `out_time` and
+  `lot.start_date` are taken from the wall clock while the seed runs, so they
+  shift on every cold start even though the rows they belong to are identical.
+  Assert on identifiers, never on a hard-coded instant.
 - **Anything created during a session does not.** A lot started via `start_lot`
   is gone at the next cold start (scale-to-zero makes that routine).
 
